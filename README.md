@@ -109,7 +109,8 @@ When they are absent, those tests are skipped rather than failed.
 
 ## Repository contents and data policy
 
-Committed reference material, required to understand and verify the application:
+Reference material required to understand and verify the application. Only the PDF is committed; the Excel
+workbooks are kept local (see `.gitignore`) and must be placed in the paths below:
 
 | File | Role |
 |---|---|
@@ -118,7 +119,7 @@ Committed reference material, required to understand and verify the application:
 | `5.MTL-DATA MISMATCH COMPARISION - ORIGINAL BACKUP.xlsx` | Human ground truth and output structure |
 | `5.MTL-DATA MISMATCH COMPARISION - AUTOMATED.xlsx` | Output **layout** reference only; its data is not authoritative |
 
-Kept local only, see `.gitignore`: uploaded source documents (`input/sources/`), generated output (`output/`),
+Kept local only, see `.gitignore`: every Excel workbook, the `input/` folder, generated output (`output/`),
 runtime data (`MTL_DATA/`), virtual environments, `node_modules`, build output, caches, logs and `.env` files.
 
-`mtl_phase1.py` is the earlier prototype. It is kept for reference until it is retired.
+The earlier prototype `mtl_phase1.py` has been retired; it remains in git history.

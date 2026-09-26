@@ -1,8 +1,12 @@
 # MTL Trace — files that stay local.
-# Reference material the application and its tests rely on is committed on purpose (see CLAUDE.md, "Authoritative Files"):
-#   MTL Attribute Values Population.pdf, 5.MTL-DATA MISMATCH COMPARISION - ORIGINAL BACKUP.xlsx,
-#   5.MTL-DATA MISMATCH COMPARISION - AUTOMATED.xlsx, input/references/5.MTL-DATA MISMATCH COMPARISION.xlsx
-# Do not add a blanket *.xlsx rule.
+# No project data goes to the remote: Excel workbooks, uploaded source documents, runtime data and generated
+# output all stay on this machine. The authoritative reference files (CLAUDE.md, "Authoritative Files") must be
+# present locally; tests that need them skip when they are absent.
+
+# ---- Excel workbooks, anywhere in the tree
+*.xlsx
+*.xlsm
+*.xls
 
 # ---- Python
 .venv/
@@ -25,11 +29,8 @@ npm-debug.log*
 # ---- Generated output (the Phase-1 prototype's defective output workbook; SPEC_VALIDATION_REPORT §18.4)
 /output/
 
-# ---- Uploaded engineering source documents (real project data; tests skip the real-data cases when absent)
-input/sources/
-
-# ---- Root-level copy of the SPIR source (byte-identical to input/sources/spir/…)
-/4391-SPIR DATA PRIORITY-2_COMPLETED.xlsx
+# ---- Input documents: the tag-scope reference and uploaded engineering sources (real project data)
+/input/
 
 # ---- Logs, temporary and Office lock files
 *.log

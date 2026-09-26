@@ -174,9 +174,8 @@ into a later phase to make Phase 1 smaller.
 
 ## Existing Prototype
 
-`mtl_phase1.py` does **not** run against the current inputs (it requires four sheets the tag-scope file
-does not contain) and it clones a template rather than generating one. Keep it untouched until Phase 1
-passes its regression fixture, then retire it.
+`mtl_phase1.py` has been retired and removed from the working tree (it remains in git history). It did not
+run against the current inputs and cloned a template rather than generating one.
 
 Ideas worth carrying forward: the TAG NUMBER vs TAG NUMBER AS PER DOC distinction, refusing to guess on
 duplicates, validating output before saving, and never mutating inputs.
