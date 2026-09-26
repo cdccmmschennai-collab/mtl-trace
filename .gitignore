@@ -1,0 +1,50 @@
+# MTL Trace — files that stay local.
+# Reference material the application and its tests rely on is committed on purpose (see CLAUDE.md, "Authoritative Files"):
+#   MTL Attribute Values Population.pdf, 5.MTL-DATA MISMATCH COMPARISION - ORIGINAL BACKUP.xlsx,
+#   5.MTL-DATA MISMATCH COMPARISION - AUTOMATED.xlsx, input/references/5.MTL-DATA MISMATCH COMPARISION.xlsx
+# Do not add a blanket *.xlsx rule.
+
+# ---- Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---- Frontend
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# ---- Runtime data: SQLite database, uploaded documents, generated workbooks, logs (MTL_DATA_DIR default)
+/MTL_DATA/
+
+# ---- Generated output (the Phase-1 prototype's defective output workbook; SPEC_VALIDATION_REPORT §18.4)
+/output/
+
+# ---- Uploaded engineering source documents (real project data; tests skip the real-data cases when absent)
+input/sources/
+
+# ---- Root-level copy of the SPIR source (byte-identical to input/sources/spir/…)
+/4391-SPIR DATA PRIORITY-2_COMPLETED.xlsx
+
+# ---- Logs, temporary and Office lock files
+*.log
+*.tmp
+*.bak
+~$*
+
+# ---- Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# ---- IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

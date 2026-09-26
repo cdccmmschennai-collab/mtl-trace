@@ -1,0 +1,36 @@
+# Comparison rules — version v1 (TRD §17–18, PRD §12–13, SPEC_VALIDATION_REPORT §7 and §9).
+# Rules are data: the comparison engine reads this file; it hard-codes no source list or priority.
+# Stamped on every run as `rules_version`.
+
+version: v1
+
+# RULE-P1 — MTL Attribute Values Population.pdf, steps 1–7. Rank 1 is the highest priority.
+# A run uses only the source types that actually participate; a type not in the run is skipped.
+source_priority:
+  - ASSET   # 1 Photography Name Plate
+  - MDS     # 2 Data Sheet
+  - SPIR    # 3 SPIR Sheet
+  - GA      # 4 GA Document (optional; participates only when uploaded)
+  - MXS     # 5 Cross Section DWG
+  - MTC     # 6 Test Certificate
+  - MOM     # 7 O&M Manuals
+
+# Equality semantics — evidence-backed only (SPEC §8 CR-5): trim, whitespace-only is empty,
+# case-insensitive. No punctuation stripping, abbreviation expansion or substring matching.
+normalization:
+  trim: true
+  case_insensitive: true
+
+# Exactly three states. Blank FINAL and STATUS when no applicable source holds a value.
+states: [MATCH, MISMATCH, REVIEW REQUIRED]
+
+# Attributes compared against the milestone tag rather than only among sources.
+# FINAL = the milestone tag. Sources that agree with each other but not with the milestone tag
+# need human judgement (REVIEW REQUIRED); sources that disagree with each other are a MISMATCH.
+milestone_anchored_attributes: [TAG_NUMBER]
+
+# Attributes holding a manufacturer name. Differing values that are only a naming variant of each other
+# (whole-word containment, punctuation/spacing, truncated last word — backend/comparison/names.py) are not
+# declared a conflict: REVIEW REQUIRED with a blank FINAL, for the engineer to decide. Other differences
+# remain MISMATCH. No fuzzy similarity and no manufacturer dictionary.
+manufacturer_name_attributes: [MAKE]
