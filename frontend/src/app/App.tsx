@@ -1,21 +1,27 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { CreateMilestonePage } from "../pages/CreateMilestone/CreateMilestonePage";
-import { HomePage } from "../pages/Home/HomePage";
-import { WorkspacePage } from "../pages/MilestoneWorkspace/WorkspacePage";
-import { AppShell } from "./AppShell";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { TraceabilityPage } from "../pages/Traceability/TraceabilityPage";
+import { WorkspaceRoute } from "../pages/Workspace/WorkspacePage";
 
 export function App() {
   return (
     <BrowserRouter>
-      <AppShell>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/milestones/new" element={<CreateMilestonePage />} />
-          <Route path="/milestones/:id" element={<Navigate to="scope" replace />} />
-          <Route path="/milestones/:id/:tab" element={<WorkspacePage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </AppShell>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <Routes>
+        <Route path="/" element={<WorkspaceRoute />} />
+        <Route path="/scopes/:milestoneId" element={<WorkspaceRoute />} />
+        <Route path="/traceability" element={<TraceabilityPage />} />
+        {/* Earlier URLs (milestone list, create page, workspace tabs) lead into the workspace. */}
+        <Route path="/milestones/new" element={<Navigate to="/" replace />} />
+        <Route path="/milestones/:id/*" element={<LegacyMilestoneRedirect />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </BrowserRouter>
   );
+}
+
+function LegacyMilestoneRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/scopes/${id}`} replace />;
 }
