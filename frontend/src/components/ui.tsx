@@ -5,29 +5,36 @@ import { Check, CircleAlert, CircleCheck, Spinner, TriangleAlert } from "./icons
 
 // ------------------------------------------------------------------ header
 
-export function Header({ right, brandLink }: { right?: ReactNode; brandLink?: string }) {
-  const brand = (
-    <>
-      <img className="mt-logo" src={BRAND.logoSrc} alt={BRAND.logoAlt} />
-      <span className="mt-brand-divider" aria-hidden="true" />
-      <span className="mt-brand-text">
-        <span className="mt-product">{BRAND.product}</span>
-        <span className="mt-tagline">{BRAND.tagline}</span>
-      </span>
-    </>
-  );
+/** Logo only on the left, optional workflow control in the centre, page action on the right. */
+export function Header({ center, right, brandLink }: { center?: ReactNode; right?: ReactNode; brandLink?: string }) {
+  const label = `${BRAND.product} · ${BRAND.tagline}`;
+  const logo = <img className="mt-logo" src={BRAND.logoSrc} alt={BRAND.logoAlt} />;
   return (
     <header className="mt-header">
       <div className="mt-header-inner">
         {brandLink ? (
-          <Link to={brandLink} className="mt-brand mt-brand-link">
-            {brand}
+          <Link to={brandLink} className="mt-brand" aria-label={label}>
+            {logo}
           </Link>
         ) : (
-          <div className="mt-brand">{brand}</div>
+          <a
+            href="#"
+            className="mt-brand"
+            aria-label={label}
+            onClick={(e) => {
+              e.preventDefault();
+              window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+            }}
+          >
+            {logo}
+          </a>
         )}
-        <div className="mt-spacer" />
-        {right}
+        {center && (
+          <nav aria-label="Workflow" className="mt-header-nav">
+            {center}
+          </nav>
+        )}
+        <div className="mt-header-right">{right}</div>
       </div>
     </header>
   );
@@ -56,33 +63,27 @@ export function Step({
   id,
   title,
   overline,
-  state,
   status,
   last,
-  glowHeight = 340,
+  onBlue,
   children,
 }: {
   id: string;
   title: string;
   overline?: string;
-  state: StepState;
   status: ReactNode;
   last?: boolean;
-  glowHeight?: number;
+  /** The step sits on the blue part of the page background: its heading and status turn white. */
+  onBlue?: boolean;
   children: ReactNode;
 }) {
   return (
-    <section id={id} className="mt-step mt-in-slow">
+    <section id={id} className={`mt-step mt-in-slow${onBlue ? " is-on-blue" : ""}`}>
       <div className={`mt-step-body${last ? " is-last" : ""}`}>
-        <span
-          aria-hidden="true"
-          className="mt-step-glow"
-          style={{ height: glowHeight, opacity: state === "active" ? 1 : 0 }}
-        />
         <div className="mt-step-head">
           <div className="mt-step-titles">
-            <h2 className="mt-h2">{title}</h2>
             {overline && <span className="mt-overline">{overline}</span>}
+            <h2 className="mt-h2">{title}</h2>
           </div>
           {status}
         </div>
@@ -152,7 +153,7 @@ export function useCountUp(delay = 250): number {
 export function scrollToStep(id: string) {
   const el = document.getElementById(id);
   if (!el) return;
-  const y = el.getBoundingClientRect().top + window.scrollY - 150;
+  const y = el.getBoundingClientRect().top + window.scrollY - 96;
   window.scrollTo({ top: Math.max(0, y), behavior: prefersReducedMotion() ? "auto" : "smooth" });
 }
 

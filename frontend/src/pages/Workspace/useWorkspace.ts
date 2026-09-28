@@ -228,6 +228,7 @@ export function useWorkspace(milestoneId: number | null) {
 
   const [uploads, setUploads] = useState<{ key: string; name: string }[]>([]);
   const [retyping, setRetyping] = useState<number | null>(null);
+  const [removing, setRemoving] = useState<number | null>(null);
   const [srcErrors, setSrcErrors] = useState<string[]>([]);
   const [openDocs, setOpenDocs] = useState<Set<string>>(new Set());
 
@@ -338,18 +339,52 @@ export function useWorkspace(milestoneId: number | null) {
     }).then(() => reloadMilestone());
   };
 
+  /**
+   * Remove a document from the current source set. The backend opens a new run carrying every other processed
+   * document forward (source records are immutable); documents still awaiting a type are re-submitted as they
+   * were when their files are at hand, as with re-typing.
+   */
+  const removeSource = (rs: RunSource) => {
+    if (!milestone || run === undefined) return;
+    const mId = milestone.id;
+    setSrcErrors([]);
+    return enqueue(async () => {
+      const current = runRef.current;
+      if (!current) return;
+      setRemoving(rs.id);
+      try {
+        const next = await api.removeSource(current.id, rs.id);
+        runRef.current = next;
+        for (const other of current.sources) {
+          if (other.id === rs.id || other.processing_status !== "FAILED") continue;
+          const f = uploadedFiles.get(`${mId}:${other.sha256}`);
+          if (f) {
+            const again = await api.uploadSource(next.id, f, other.source_type ? { source_type: other.source_type } : {}).catch(() => null);
+            if (again?.processing_status === "FAILED") openDoc(`s${again.id}`);
+          }
+        }
+        await refreshRun(next.id);
+      } catch (e) {
+        setSrcErrors([`${rs.original_filename}: ${message(e)}`]);
+        resync();
+      } finally {
+        setRemoving(null);
+      }
+    }).then(() => reloadMilestone());
+  };
+
   const docs: DocView[] = [
     ...(run?.sources ?? []).map((s) => ({
       key: `s${s.id}`,
       name: s.original_filename,
-      phase: retyping === s.id ? ("processing" as const) : docPhase(s),
+      phase: retyping === s.id || removing === s.id ? ("processing" as const) : docPhase(s),
       source: s,
     })),
     ...uploads.map((u) => ({ key: u.key, name: u.name, phase: "processing" as const, source: null })),
   ];
   const usable = (run?.sources ?? []).filter((s) => s.processing_status !== "FAILED" && s.source_type);
   const excluded = (run?.sources ?? []).filter((s) => !usable.includes(s));
-  const processing = uploads.length > 0 || retyping !== null;
+  const processing = uploads.length > 0 || retyping !== null || removing !== null;
   const unknownCount = docs.filter((d) => d.phase === "unknown").length;
   const docsReady = locked && usable.length > 0 && !processing;
 
@@ -470,6 +505,8 @@ export function useWorkspace(milestoneId: number | null) {
     toggleDoc,
     addSources,
     retype,
+    removeSource,
+    removing,
     hasFileFor,
     // consolidation / comparison / output
     cons: consNow,

@@ -1,6 +1,6 @@
 import { api } from "../../api/client";
 import { Check, Download, FileSpreadsheet } from "../../components/icons";
-import { Status, Step, useCountUp, type StepState } from "../../components/ui";
+import { Status, Step, useCountUp } from "../../components/ui";
 import { fmtSize, nf } from "../../lib/format";
 import type { Comparison } from "../../types/api";
 
@@ -10,12 +10,10 @@ import type { Comparison } from "../../types/api";
  */
 export function ExcelStep({
   cmp,
-  state,
   downloaded,
   onDownload,
 }: {
   cmp: Comparison;
-  state: StepState;
   downloaded: boolean;
   onDownload: () => void;
 }) {
@@ -36,8 +34,8 @@ export function ExcelStep({
   const status = downloaded ? <Status tone="match" kind="done">Downloaded</Status> : <Status tone="accent">Ready to download</Status>;
 
   return (
-    <Step id="st-out" title="Excel" overline="COMPARISON RESULT" state={state} status={status} last glowHeight={420}>
-      <div className="mt-step-content mt-result">
+    <Step id="st-out" title="Excel" status={status} last onBlue>
+      <div className="mt-panel mt-step-content mt-result">
         <div className="mt-totals">
           <span className="mt-total">
             <span className="mt-total-n">{cf(tags)}</span>tags

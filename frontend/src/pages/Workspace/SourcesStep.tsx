@@ -9,7 +9,7 @@ import {
   TriangleAlert,
   Upload,
 } from "../../components/icons";
-import { ErrorLine, FileDrop, Status, Step, type StepState } from "../../components/ui";
+import { ErrorLine, FileDrop, Status, Step } from "../../components/ui";
 import { nf, plural } from "../../lib/format";
 import type { RunSource, SourceType } from "../../types/api";
 import type { DocView, Workspace } from "./useWorkspace";
@@ -23,7 +23,7 @@ const ATTRS = [
 ];
 const ACCEPT = ".xlsx,.xlsm";
 
-export function SourcesStep({ ws, state }: { ws: Workspace; state: StepState }) {
+export function SourcesStep({ ws }: { ws: Workspace }) {
   const usable = ws.usable.length;
   const status = ws.processing ? (
     <Status tone="accent" kind="busy">Processing</Status>
@@ -43,9 +43,11 @@ export function SourcesStep({ ws, state }: { ws: Workspace; state: StepState }) 
 
   const scopeTags = ws.tagCount;
   const intakeLocked = ws.run === undefined || ws.consPhase === "running" || ws.cmpPhase === "running";
+  const canEdit = !ws.processing && ws.consPhase !== "running" && ws.cmpPhase !== "running";
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   return (
-    <Step id="st-src" title="Source documents" state={state} status={status} glowHeight={380}>
+    <Step id="st-src" title="Source documents" status={status}>
       <div className="mt-step-content mt-stack">
         {ws.docs.length === 0 ? (
           <FileDrop
@@ -67,7 +69,7 @@ export function SourcesStep({ ws, state }: { ws: Workspace; state: StepState }) 
             <span className="mt-pill">Browse files</span>
           </FileDrop>
         ) : (
-          <div className="mt-panel mt-doclist">
+          <div className="mt-doclist">
             {ws.docs.map((d) => (
               <DocRow
                 key={d.key}
@@ -76,9 +78,13 @@ export function SourcesStep({ ws, state }: { ws: Workspace; state: StepState }) 
                 open={ws.openDocs.has(d.key)}
                 onToggle={() => ws.toggleDoc(d.key)}
                 types={ws.types}
-                canRetype={!ws.processing && ws.consPhase !== "running" && ws.cmpPhase !== "running"}
+                canRetype={canEdit}
                 hasFile={d.source ? ws.hasFileFor(d.source) : false}
                 onRetype={ws.retype}
+                confirming={confirmRemove === d.key}
+                onConfirm={(on) => setConfirmRemove(on ? d.key : null)}
+                onRemove={ws.removeSource}
+                reprocessNote={ws.consPhase === "done" || ws.consPhase === "stale"}
               />
             ))}
             <FileDrop
@@ -104,6 +110,7 @@ export function SourcesStep({ ws, state }: { ws: Workspace; state: StepState }) 
   );
 }
 
+/** One document: file + status · type + coverage · coverage bar · attributes + Details. */
 function DocRow({
   doc,
   scopeTags,
@@ -113,6 +120,10 @@ function DocRow({
   canRetype,
   hasFile,
   onRetype,
+  confirming,
+  onConfirm,
+  onRemove,
+  reprocessNote,
 }: {
   doc: DocView;
   scopeTags: number;
@@ -122,12 +133,18 @@ function DocRow({
   canRetype: boolean;
   hasFile: boolean;
   onRetype: (rs: RunSource, type: string, picked?: File) => void;
+  confirming: boolean;
+  onConfirm: (on: boolean) => void;
+  onRemove: (rs: RunSource) => void;
+  reprocessNote: boolean;
 }) {
   const s = doc.source;
   const proc = doc.phase === "processing";
   const ready = !!s && !proc && (doc.phase === "ok" || doc.phase === "warn");
+  const unknown = !proc && doc.phase === "unknown";
   const matched = s?.matched_tag_count ?? 0;
   const pct = ready && scopeTags ? Math.min(100, (matched / scopeTags) * 100) : 0;
+  const settled = !!s && !proc;
 
   const statusEl = proc ? (
     <span className="mt-doc-status tone-accent">
@@ -151,60 +168,102 @@ function DocRow({
     </span>
   );
 
-  const typeLabel = proc
-    ? s?.source_type_label ?? "Detecting type…"
-    : s?.source_type_label ?? "Type not detected";
+  const typeLabel = proc ? s?.source_type_label ?? "Detecting type…" : s?.source_type_label ?? "Type not detected";
 
   return (
-    <div className="mt-doc mt-in">
+    <article className="mt-doc mt-in" aria-label={doc.name}>
       <div className="mt-doc-grid">
         <span className="mt-doc-icon">
           <SourceTypeIcon code={s?.source_type ?? null} />
         </span>
         <span className="mt-doc-name mono">{doc.name}</span>
         {statusEl}
+
         <span />
         <span className={`mt-doc-type${!proc && !s?.source_type ? " is-missing" : ""}`}>{typeLabel}</span>
-        <span className="mt-doc-cov mono">
+        <span className="mt-doc-cov mono" title="Scope tags found in this document">
           {ready ? `${nf(matched)} / ${nf(scopeTags)} in scope` : proc ? "reading…" : `— / ${nf(scopeTags)}`}
         </span>
+
         <span />
-        <span className="mt-doc-bar">
+        <span className={`mt-doc-bar${proc ? " is-busy" : ""}`} aria-hidden="true">
           <span style={{ width: `${pct}%` }} />
         </span>
+
         <span />
-        <span className="mt-doc-attrs">
-          {ATTRS.map((a) => (
-            <span key={a.code} className={`mono${ready && s!.attributes_provided.includes(a.code) ? "" : " is-missing"}`}>
-              {a.short}
-            </span>
-          ))}
-        </span>
-        {s && !proc ? (
-          <button type="button" className="mt-doc-details" onClick={onToggle} aria-expanded={open}>
+        <ul className="mt-doc-attrs" aria-label="Attributes provided">
+          {ATTRS.map((a) => {
+            const has = ready && s!.attributes_provided.includes(a.code);
+            return (
+              <li key={a.code} className={`mono${has ? "" : " is-missing"}`}>
+                {a.short}
+                {!has && <span className="sr-only"> (not provided)</span>}
+              </li>
+            );
+          })}
+        </ul>
+        {settled ? (
+          <button type="button" className="mt-doc-link" onClick={onToggle} aria-expanded={open}>
             Details {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
         ) : (
           <span />
         )}
       </div>
-      {open && s && !proc && (
-        <DocDetails source={s} unknown={doc.phase === "unknown"} types={types} canRetype={canRetype} hasFile={hasFile} onRetype={onRetype} />
+
+      {open && settled && (
+        <div className="mt-doc-details mt-in-fast">
+          {unknown && <TypePick source={s!} types={types} canRetype={canRetype} hasFile={hasFile} onRetype={onRetype} />}
+          <DocDetails source={s!} />
+          {!confirming && (
+            <div>
+              <button type="button" className="mt-doc-link mt-doc-remove" onClick={() => onConfirm(true)} disabled={!canRetype}>
+                Remove source
+              </button>
+            </div>
+          )}
+        </div>
       )}
-    </div>
+
+      {confirming && settled && (
+        <div role="alertdialog" aria-label="Confirm source removal" className="mt-doc-confirm mt-in-fast">
+          <div className="mt-doc-confirm-text">
+            <span>Remove this source?</span>
+            <span className="mono mt-doc-confirm-file">{doc.name}</span>
+            {reprocessNote && (
+              <span className="mt-doc-confirm-note">The remaining sources will need to be consolidated and compared again.</span>
+            )}
+          </div>
+          <div className="mt-actions">
+            <button type="button" className="btn btn-ghost btn-sm-32" onClick={() => onConfirm(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger btn-sm-32"
+              disabled={!canRetype}
+              onClick={() => {
+                onConfirm(false);
+                onRemove(s!);
+              }}
+            >
+              Remove source
+            </button>
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 
-function DocDetails({
+function TypePick({
   source: s,
-  unknown,
   types,
   canRetype,
   hasFile,
   onRetype,
 }: {
   source: RunSource;
-  unknown: boolean;
   types: SourceType[];
   canRetype: boolean;
   hasFile: boolean;
@@ -212,14 +271,6 @@ function DocDetails({
 }) {
   const [choice, setChoice] = useState("");
   const picker = useRef<HTMLInputElement>(null);
-  const facts: [string, string][] = [
-    ["Sheet", s.sheet_name ?? "—"],
-    ["Header row", s.header_row != null ? String(s.header_row) : "—"],
-    ["Rows read", s.row_count != null ? nf(s.row_count) : "—"],
-    ["Tags found", s.unique_tag_count != null ? nf(s.unique_tag_count) : "—"],
-    ["Outside scope, not added", s.unmatched_tag_count != null ? nf(s.unmatched_tag_count) : "—"],
-    ["Duplicate tags", s.duplicate_tag_count != null ? nf(s.duplicate_tag_count) : "—"],
-  ];
 
   const choose = (type: string) => {
     setChoice(type);
@@ -229,48 +280,60 @@ function DocDetails({
   };
 
   return (
-    <div className="mt-doc-details-body mt-in-fast">
-      {unknown && (
-        <div className="mt-type-pick">
-          <span className="mt-type-pick-label">Type not detected</span>
-          <select
-            className="mt-select"
-            aria-label="Document type"
-            value={choice}
-            disabled={!canRetype}
-            onChange={(e) => choose(e.target.value)}
-          >
-            <option value="">Choose type…</option>
-            {types
-              .filter((t) => t.adapter_available)
-              .map((t) => (
-                <option key={t.code} value={t.code}>
-                  {t.label}
-                </option>
-              ))}
-          </select>
-          {!hasFile && <span className="mt-type-pick-hint">You will be asked to choose the file again.</span>}
-          <input
-            ref={picker}
-            type="file"
-            accept={ACCEPT}
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = "";
-              if (f && choice) onRetype(s, choice, f);
-            }}
-          />
-        </div>
-      )}
-      <div className="mt-facts">
+    <div className="mt-type-pick">
+      <span className="mt-type-pick-label">Type not detected</span>
+      <select
+        className="mt-select"
+        aria-label="Document type"
+        value={choice}
+        disabled={!canRetype}
+        onChange={(e) => choose(e.target.value)}
+      >
+        <option value="">Choose type…</option>
+        {types
+          .filter((t) => t.adapter_available)
+          .map((t) => (
+            <option key={t.code} value={t.code}>
+              {t.label}
+            </option>
+          ))}
+      </select>
+      {!hasFile && <span className="mt-type-pick-hint">You will be asked to choose the file again.</span>}
+      <input
+        ref={picker}
+        type="file"
+        accept={ACCEPT}
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f && choice) onRetype(s, choice, f);
+        }}
+      />
+    </div>
+  );
+}
+
+function DocDetails({ source: s }: { source: RunSource }) {
+  const facts: [string, string][] = [
+    ["Sheet", s.sheet_name ?? "—"],
+    ["Header row", s.header_row != null ? String(s.header_row) : "—"],
+    ["Rows read", s.row_count != null ? nf(s.row_count) : "—"],
+    ["Tags found", s.unique_tag_count != null ? nf(s.unique_tag_count) : "—"],
+    ["Outside scope, not added", s.unmatched_tag_count != null ? nf(s.unmatched_tag_count) : "—"],
+    ["Duplicate tags", s.duplicate_tag_count != null ? nf(s.duplicate_tag_count) : "—"],
+  ];
+
+  return (
+    <>
+      <dl className="mt-facts" aria-label="Source details">
         {facts.map(([k, v]) => (
           <div key={k} className="mt-fact">
-            <span className="mt-fact-k">{k}</span>
-            <span className="mt-fact-v mono">{v}</span>
+            <dt className="mt-fact-k">{k}</dt>
+            <dd className="mt-fact-v mono">{v}</dd>
           </div>
         ))}
-      </div>
+      </dl>
       {s.errors.map((e, i) => (
         <div key={`e${i}`} className="mt-issue is-error">
           <CircleAlert size={14} />
@@ -283,6 +346,6 @@ function DocDetails({
           <span>{w.message}</span>
         </div>
       ))}
-    </div>
+    </>
   );
 }

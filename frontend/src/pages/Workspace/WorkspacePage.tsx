@@ -1,17 +1,15 @@
-import { useEffect, useRef } from "react";
+﻿import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { api } from "../../api/client";
-import { ArrowDown, Download, Spinner } from "../../components/icons";
 import { Header, Toast, scrollToStep, useToast, type StepState } from "../../components/ui";
 import { nf } from "../../lib/format";
 import { ComparisonStep } from "./ComparisonStep";
 import { ConsolidationStep } from "./ConsolidationStep";
 import { ExcelStep } from "./ExcelStep";
-import { ProgressBar, type NextAction } from "./ProgressBar";
 import { ScopeSelector } from "./ScopeSelector";
 import { ScopeStep } from "./ScopeStep";
 import { SourcesStep } from "./SourcesStep";
 import { useWorkspace } from "./useWorkspace";
+import { WorkflowNav, type WorkflowItem } from "./WorkflowNav";
 
 /** `/` is a new tag scope; `/scopes/:milestoneId` an existing one. Each scope gets a fresh workspace. */
 export function WorkspaceRoute() {
@@ -45,14 +43,16 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
     showToast(`Downloaded · ${cmp.output.file_name}`);
   };
 
-  const next = nextAction(ws, () => {
-    if (!cmp?.output) return;
-    const a = document.createElement("a");
-    a.href = api.downloadUrl(cmp.run_id, cmp.output.id);
-    a.download = cmp.output.file_name;
-    a.click();
-    downloadExcel();
-  });
+  const workflow: WorkflowItem[] = [
+    { id: "st-scope", label: "Scope", state: states[0], available: true },
+    { id: "st-src", label: "Sources", state: states[1], available: show.src },
+    { id: "st-cons", label: "Consolidate", state: states[2], available: show.cons },
+    { id: "st-cmp", label: "Compare", state: states[3], available: show.cmp },
+    { id: "st-out", label: "Excel", state: states[4], available: show.out && !!cmp },
+  ];
+
+  const page = useRef<HTMLDivElement>(null);
+  const backdrop = usePageBackdrop(page);
 
   // Each newly revealed step is scrolled into view — but not the ones already there when the page loads.
   const revealed = useRef<typeof show | null>(null);
@@ -83,11 +83,12 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
         : "No scope imported";
 
   return (
-    <div className="mt-page">
-      <div aria-hidden="true" className="mt-glow-top" />
-      <Header right={<ScopeSelector currentRef={milestone?.milestone_code ?? null} tags={scopeStatus === "NONE" ? 0 : ws.tagCount} />} />
-      <ProgressBar states={states} next={next} />
-
+    <div className="mt-page" ref={page} style={backdrop.minHeight ? { minHeight: backdrop.minHeight } : undefined}>
+      <div aria-hidden="true" className="mt-backdrop" style={{ background: backdrop.background }} />
+      <Header
+        center={<WorkflowNav items={workflow} />}
+        right={<ScopeSelector currentRef={milestone?.milestone_code ?? null} tags={scopeStatus === "NONE" ? 0 : ws.tagCount} />}
+      />
       <main className="mt-main" id="main">
         <div className="mt-intro">
           <span className="mt-intro-ref mono">{ref ?? "NEW TAG SCOPE"}</span>
@@ -103,11 +104,11 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
         ) : milestone === undefined ? null : (
           <>
             {ws.loadError && <div className="mt-error mt-load-banner">{ws.loadError}</div>}
-            <ScopeStep ws={ws} state={states[0]} />
-            {show.src && <SourcesStep ws={ws} state={states[1]} />}
-            {show.cons && <ConsolidationStep ws={ws} state={states[2]} onDownloaded={(f) => showToast(`Downloaded · ${f}`)} />}
-            {show.cmp && <ComparisonStep ws={ws} state={states[3]} />}
-            {show.out && cmp && <ExcelStep cmp={cmp} state={states[4]} downloaded={ws.downloaded} onDownload={downloadExcel} />}
+            <ScopeStep ws={ws} />
+            {show.src && <SourcesStep ws={ws} />}
+            {show.cons && <ConsolidationStep ws={ws} onDownloaded={(f) => showToast(`Downloaded · ${f}`)} />}
+            {show.cmp && <ComparisonStep ws={ws} />}
+            {show.out && cmp && <ExcelStep cmp={cmp} downloaded={ws.downloaded} onDownload={downloadExcel} />}
           </>
         )}
       </main>
@@ -116,45 +117,40 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
   );
 }
 
-function nextAction(ws: ReturnType<typeof useWorkspace>, download: () => void): NextAction {
-  const go = (label: string, id: string, busy = false): NextAction => ({
-    label,
-    busy,
-    icon: busy ? <Spinner size={14} /> : <ArrowDown size={14} />,
-    onClick: () => scrollToStep(id),
+/**
+ * The page background: pure white at the top, then a static white → blue gradient that starts 70px inside the
+ * Source documents step (or 40px above the end of the Scope step before it exists) and completes over 380px.
+ */
+function usePageBackdrop(page: RefObject<HTMLDivElement | null>) {
+  const [y, setY] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const root = page.current;
+    if (!root) return;
+    const measure = () => {
+      const top = root.getBoundingClientRect().top;
+      const src = document.getElementById("st-src");
+      const scope = document.getElementById("st-scope");
+      const next = src
+        ? Math.round(src.getBoundingClientRect().top - top + 70)
+        : scope
+          ? Math.round(scope.getBoundingClientRect().bottom - top - 40)
+          : null;
+      setY((prev) => (prev === next ? prev : next));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    const main = root.querySelector("main");
+    if (main) ro.observe(main);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
   });
-  if (!ws.ready) return go("Loading", "st-scope", true);
-  switch (ws.scopePhase) {
-    case "empty":
-      return go("Upload tag scope", "st-scope");
-    case "selected":
-      return go("Validate scope", "st-scope");
-    case "validating":
-      return go("Validating", "st-scope", true);
-    case "invalid":
-      return go("Replace scope file", "st-scope");
-    case "validated":
-      return go(`Import ${nf(ws.report?.tag_count ?? 0)} tags`, "st-scope");
-    case "importing":
-      return go("Importing", "st-scope", true);
-    case "imported":
-      return go("Lock scope", "st-scope");
-    case "locking":
-      return go("Locking", "st-scope", true);
-  }
-  if (ws.docs.length === 0) return go("Add source files", "st-src");
-  if (ws.processing) return go("Processing", "st-src", true);
-  if (!ws.usable.length) return go("Set document type", "st-src");
-  if (ws.consPhase === "running") return go("Consolidating", "st-cons", true);
-  if (ws.consPhase !== "done") return go(ws.consPhase === "stale" ? "Consolidate again" : "Consolidate", "st-cons");
-  if (ws.cmpPhase === "running") return go("Comparing", "st-cmp", true);
-  if (ws.cmpPhase !== "done") return go("Compare", "st-cmp");
+  if (y === null) return { background: "transparent", minHeight: undefined };
   return {
-    label: ws.downloaded ? "Download again" : "Download Excel",
-    icon: <Download size={14} />,
-    onClick: () => {
-      scrollToStep("st-out");
-      download();
-    },
+    background: `linear-gradient(180deg, #FFFFFF 0, #FFFFFF ${y}px, #2640A6 ${y + 380}px, #2640A6 100%)`,
+    minHeight: `${y + 640}px`,
   };
 }

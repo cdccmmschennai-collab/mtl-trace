@@ -72,6 +72,9 @@ export const api = {
     file: File,
     fields: { source_type?: string },
   ) => upload<RunSource>(`/api/runs/${runId}/sources`, file, fields),
+  /** Resolves to the new run carrying every other processed document; the given run is left unchanged. */
+  removeSource: (runId: number, sourceId: number) =>
+    request<Run>(`/api/runs/${runId}/sources/${sourceId}`, { method: "DELETE" }),
   sourceRows: (runId: number, sourceId: number, offset: number, limit: number) =>
     request<SourceRowsPage>(`/api/runs/${runId}/sources/${sourceId}/rows?offset=${offset}&limit=${limit}`),
 

@@ -1,8 +1,9 @@
-/* MTL Trace — design tokens and components, from the design handoff (design_handoff_mtl_trace 2/).
+/* MTL Trace — design tokens and components, from the design handoff (design_handoff_mtl_trace/).
    One light theme, one accent (blue-700). Status colours are used only for status. */
 
 :root {
-  --bg: #f6f7f9;
+  --bg: #ffffff;
+  --blue: #2640a6;
   --surface: #ffffff;
   --ink: #1c2029;
   --ink-2: #4a505c;
@@ -47,8 +48,8 @@
   --toast-icon: #7fd1a0;
 
   --ease: cubic-bezier(0.2, 0, 0, 1);
-  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --sans: "Geist Sans", "Geist", "Segoe UI", system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, monospace;
   --gutter: clamp(16px, 3vw, 24px);
   --step-gap: clamp(56px, 8vw, 80px);
 }
@@ -180,89 +181,113 @@ svg { flex-shrink: 0; display: block; }
   position: relative;
   min-height: 100vh;
   background: var(--bg);
-  overflow-x: clip; /* the step glows reach 32px past the column; clip (not hidden) keeps sticky working */
+  overflow-x: clip; /* clip (not hidden) keeps the sticky header working */
 }
 
-.mt-glow-top {
+/* static page background: white, then white → blue from inside the Source documents step (see usePageBackdrop) */
+.mt-backdrop {
   position: absolute;
-  inset: 0 0 auto 0;
-  height: 640px;
+  inset: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse 900px 460px at 50% 0%, rgba(38, 64, 166, 0.055), rgba(38, 64, 166, 0) 70%);
-}
-
-.mt-glow-top-trace {
-  height: 560px;
-  background: radial-gradient(ellipse 900px 420px at 50% 0%, rgba(38, 64, 166, 0.05), rgba(38, 64, 166, 0) 70%);
 }
 
 .mt-header {
   position: sticky;
   top: 0;
   z-index: 30;
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--header-line);
+  background: var(--surface);
 }
 
 .mt-header-inner {
-  max-width: 920px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 0 var(--gutter);
-  min-height: 60px;
+  padding: 12px clamp(16px, 3vw, 32px);
   display: flex;
   align-items: center;
-  gap: 16px;
+  justify-content: space-between;
+  gap: 12px 24px;
   flex-wrap: wrap;
 }
 
 .mt-brand {
+  order: 1;
+  flex: 1 0 auto;
   display: flex;
   align-items: center;
-  gap: 14px;
-  min-width: 0;
-}
-
-.mt-brand-link,
-.mt-brand-link:hover {
-  color: inherit;
-  text-decoration: none;
 }
 
 .mt-logo {
-  height: 30px;
+  height: 34px;
   width: auto;
   display: block;
 }
 
-.mt-brand-divider {
-  width: 1px;
-  height: 28px;
-  background: var(--gold);
+.mt-header-nav {
+  order: 2;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
-.mt-brand-text {
+.mt-header-right {
+  order: 3;
+  flex: 1 0 auto;
   display: flex;
-  flex-direction: column;
-  line-height: 1.25;
+  justify-content: flex-end;
 }
 
-.mt-product {
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+/* workflow segmented control */
+.mt-seg {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  width: max-content;
+  background: #f3f4f7;
+  border: 1px solid #e6e8ec;
+  border-radius: 10px;
 }
 
-.mt-tagline {
-  font-size: 12px;
-  color: var(--ink-label);
+.mt-seg-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms, border-color 150ms;
 }
 
-.mt-spacer {
-  flex: 1;
+.mt-seg-item:hover:not(:disabled) { color: var(--ink); }
+
+.mt-seg-item.is-selected {
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: 0 1px 2px rgba(20, 24, 33, 0.06);
+  color: var(--ink);
+  font-weight: 500;
 }
 
+.mt-seg-item:disabled {
+  color: #a3a9b4;
+  cursor: default;
+}
+
+.mt-seg-check { color: var(--match); }
+
+/* narrow: logo + selector on row 1, the segmented control on its own scrollable row */
+@media (max-width: 920px) {
+  .mt-header-nav { order: 3; flex: 1 1 100%; }
+  .mt-header-right { order: 2; }
+}
 /* scope selector */
 .mt-selector {
   position: relative;
@@ -404,83 +429,6 @@ svg { flex-shrink: 0; display: block; }
   color: var(--accent);
 }
 
-/* ------------------------------------------------------------------ progress bar */
-
-.mt-progress {
-  position: sticky;
-  top: 61px;
-  z-index: 20;
-  background: rgba(246, 247, 249, 0.92);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--header-line);
-}
-
-.mt-progress-inner {
-  max-width: 920px;
-  margin: 0 auto;
-  padding: 10px var(--gutter);
-  display: flex;
-  align-items: center;
-  gap: 12px 28px;
-  flex-wrap: wrap;
-}
-
-.mt-trace {
-  flex: 1 1 480px;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  min-width: 0;
-}
-
-.mt-trace-item {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-width: 0;
-}
-
-.mt-trace-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ink);
-  padding-right: 6px;
-}
-
-.mt-trace-item.is-waiting .mt-trace-label { color: var(--ink-3); }
-.mt-trace-item.is-active .mt-trace-label { font-weight: 600; }
-
-.mt-trace-track {
-  display: flex;
-  align-items: center;
-}
-
-.mt-trace-dot {
-  width: 9px;
-  height: 9px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  border: 1.5px solid var(--line-strong);
-  background: var(--surface);
-  transition: background-color 300ms, border-color 300ms;
-}
-
-.mt-trace-item.is-done .mt-trace-dot { background: var(--accent); border-color: var(--accent); }
-.mt-trace-item.is-active .mt-trace-dot { border-color: var(--accent); animation: mt-pulse 1.8s ease-out infinite; }
-
-.mt-trace-line {
-  flex: 1;
-  height: 1.5px;
-  margin: 0 4px;
-  background: var(--line);
-  transition: background-color 500ms var(--ease);
-}
-
-.mt-trace-item.is-done .mt-trace-line { background: var(--accent); }
-
 /* ------------------------------------------------------------------ buttons */
 
 .btn {
@@ -559,17 +507,6 @@ a.btn-primary:hover {
 
 .btn-md {
   height: 34px;
-}
-
-.btn-next {
-  height: 34px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-
-.btn-next-lead {
-  opacity: 0.75;
-  font-weight: 400;
 }
 
 .btn-back {
@@ -661,15 +598,17 @@ a.btn-primary:hover {
   padding-bottom: 0;
 }
 
-.mt-step-glow {
-  position: absolute;
-  left: -32px;
-  right: -32px;
-  top: -36px;
-  pointer-events: none;
-  background: radial-gradient(ellipse 70% 60% at 40% 30%, rgba(38, 64, 166, 0.05), rgba(38, 64, 166, 0) 72%);
-  transition: opacity 700ms;
+/* steps sitting directly on the blue background: heading and status turn white; panels stay white */
+.mt-step.is-on-blue .mt-step-head .mt-h2,
+.mt-step.is-on-blue .mt-step-head .mt-status,
+.mt-step.is-on-blue .mt-step-head .mt-status svg {
+  color: #ffffff;
 }
+
+.mt-step.is-on-blue .mt-step-head .mt-overline { color: rgba(255, 255, 255, 0.82); }
+
+.mt-h2,
+.mt-status { transition: color 250ms; }
 
 .mt-step-head {
   position: relative;
@@ -1004,10 +943,20 @@ a.btn-primary:hover {
 
 /* ------------------------------------------------------------------ sources */
 
-.mt-doclist { overflow: hidden; }
+/* Sources: one bordered list. Each row — file + status · type + coverage · coverage bar · attributes + Details. */
+
+.mt-doclist {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  min-width: 0;
+}
 
 .mt-doc {
   position: relative;
+  min-width: 0;
   border-bottom: 1px solid var(--divider);
   animation-duration: 260ms;
 }
@@ -1021,7 +970,7 @@ a.btn-primary:hover {
 }
 
 .mt-doc-icon { color: var(--ink-2); display: flex; padding-top: 1px; }
-.mt-doc-name { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.mt-doc-name { min-width: 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 
 .mt-doc-status {
   display: flex;
@@ -1035,7 +984,7 @@ a.btn-primary:hover {
 
 .mt-doc-status.tone-review svg { color: var(--review-icon); }
 
-.mt-doc-type { font-size: 13px; color: var(--ink-2); }
+.mt-doc-type { font-size: 13px; color: var(--ink-2); min-width: 0; }
 .mt-doc-type.is-missing { color: var(--review); }
 
 .mt-doc-cov {
@@ -1060,21 +1009,27 @@ a.btn-primary:hover {
   transition: width 500ms var(--ease);
 }
 
+.mt-doc-bar.is-busy > span { background: var(--accent); }
+
 .mt-doc-attrs {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
 }
 
-.mt-doc-attrs span {
+.mt-doc-attrs li {
   font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--ink);
 }
 
-.mt-doc-attrs span.is-missing { color: var(--line-strong); }
+.mt-doc-attrs li.is-missing { color: var(--line-strong); }
 
-.mt-doc-details {
+.mt-doc-link {
   justify-self: end;
   display: inline-flex;
   align-items: center;
@@ -1087,16 +1042,22 @@ a.btn-primary:hover {
   background: transparent;
   color: var(--ink-label);
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.mt-doc-details:hover { background: var(--ghost-hover); }
+.mt-doc-link:hover:not(:disabled) { background: var(--ghost-hover); color: var(--ink); }
+.mt-doc-link:disabled { opacity: 0.5; cursor: not-allowed; }
+.mt-doc-remove { margin-right: 0; margin-left: -6px; }
+.mt-doc-remove:hover:not(:disabled) { color: var(--mismatch); }
 
-.mt-doc-details-body {
+/* details: type picker (when not detected), facts, warnings */
+.mt-doc-details {
   padding: 0 16px 16px 48px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 
 .mt-type-pick {
@@ -1111,6 +1072,7 @@ a.btn-primary:hover {
 
 .mt-select {
   height: 32px;
+  max-width: 100%;
   padding: 0 8px;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
@@ -1122,13 +1084,46 @@ a.btn-primary:hover {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px 20px;
+  margin: 0;
   padding-top: 10px;
   border-top: 1px dashed var(--header-line);
 }
 
-.mt-fact { display: flex; flex-direction: column; }
+.mt-fact { display: flex; flex-direction: column; min-width: 0; }
 .mt-fact-k { font-size: 12px; color: var(--ink-3); }
-.mt-fact-v { font-size: 12px; }
+.mt-fact-v { margin: 0; font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
+
+.mt-doc-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px 16px 10px 48px;
+  border-top: 1px solid var(--divider);
+  background: var(--fill);
+  font-size: 13px;
+}
+
+.mt-doc-confirm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mt-doc-confirm-file { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.mt-doc-confirm-note { font-size: 12px; color: var(--review-note); }
+
+.btn-danger {
+  background: var(--mismatch);
+  border-color: var(--mismatch);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) { background: #93190f; border-color: #93190f; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 
 /* ------------------------------------------------------------------ consolidation */
 
@@ -1254,6 +1249,7 @@ a.btn-primary:hover {
   display: flex;
   flex-direction: column;
   gap: 32px;
+  padding: clamp(16px, 3vw, 24px);
 }
 
 .mt-overline-row { display: flex; justify-content: space-between; }
@@ -1628,7 +1624,15 @@ a.btn-primary:hover {
     border-top: 1px solid var(--divider);
   }
 
-  .mt-doc-details-body { padding-left: 16px; }
+  .mt-doc-grid { grid-template-columns: 20px minmax(0, 1fr); }
+  .mt-doc-status,
+  .mt-doc-cov { grid-column: 2; justify-content: flex-start; text-align: left; }
+  .mt-doc-bar { grid-column: 2; }
+  .mt-doc-link { grid-column: 2; justify-self: start; margin: 4px 0 0 -6px; }
+  .mt-doc-grid > span:empty { display: none; }
+  .mt-doc-icon { grid-row: 1 / span 6; }
+  .mt-doc-details,
+  .mt-doc-confirm { padding-left: 16px; }
 
   .mt-attr-grid {
     grid-template-columns: minmax(72px, 96px) minmax(40px, 1fr) repeat(4, 34px);
@@ -1639,8 +1643,4 @@ a.btn-primary:hover {
   .mt-cov-bar { grid-column: 2 / 4; grid-row: 2; }
 
   .mt-selector-tags { display: none; }
-}
-
-@media (max-width: 480px) {
-  .mt-trace-label { font-size: 12px; }
 }

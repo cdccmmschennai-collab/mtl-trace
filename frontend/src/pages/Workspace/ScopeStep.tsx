@@ -13,7 +13,7 @@ import {
   TriangleAlert,
   Upload,
 } from "../../components/icons";
-import { ErrorLine, FileDrop, Status, Step, type StepState } from "../../components/ui";
+import { ErrorLine, FileDrop, Status, Step } from "../../components/ui";
 import { cleanRef, fmtSize, fmtWhen, nf, plural } from "../../lib/format";
 import type { Scope, ScopeValidationReport } from "../../types/api";
 import { CHECK_COUNT, type Workspace } from "./useWorkspace";
@@ -50,7 +50,7 @@ function checksOf(r: ScopeValidationReport): Check[] {
   ];
 }
 
-export function ScopeStep({ ws, state }: { ws: Workspace; state: StepState }) {
+export function ScopeStep({ ws }: { ws: Workspace }) {
   const { scopePhase: phase, milestone, report } = ws;
   const replaceInput = useRef<HTMLInputElement>(null);
   const [showTags, setShowTags] = useState(false);
@@ -71,7 +71,7 @@ export function ScopeStep({ ws, state }: { ws: Workspace; state: StepState }) {
   const n = ws.tagCount;
 
   return (
-    <Step id="st-scope" title="Finalized tag scope" state={state} status={status}>
+    <Step id="st-scope" title="Finalized tag scope" status={status}>
       <div className="mt-step-content">
         {phase === "empty" && (
           <div className="mt-stack mt-in">

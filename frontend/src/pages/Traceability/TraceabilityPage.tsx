@@ -103,7 +103,6 @@ export function TraceabilityPage() {
 
   return (
     <div className="mt-page">
-      <div aria-hidden="true" className="mt-glow-top mt-glow-top-trace" />
       <Header
         brandLink="/"
         right={

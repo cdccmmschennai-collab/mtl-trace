@@ -186,10 +186,11 @@ class RunService:
 
     # ---- runs
 
-    def create_run(self, milestone_id: int, notes: str | None, base_run_id: int | None = None) -> RunDetailView:
+    def create_run(self, milestone_id: int, notes: str | None, base_run_id: int | None = None,
+                   exclude_source_ids: frozenset[int] = frozenset()) -> RunDetailView:
         """Create a run. With `base_run_id`, the new run starts with that run's successfully processed
-        documents: each is read back from the vault (hash-verified) and extracted afresh for the new run.
-        The base run is only read, never changed."""
+        documents (except `exclude_source_ids`): each is read back from the vault (hash-verified) and
+        extracted afresh for the new run. The base run is only read, never changed."""
         with self.db.session() as s:
             m = s.get(Milestone, milestone_id)
             if m is None:
@@ -202,7 +203,8 @@ class RunService:
                 if base is None or base.milestone_id != m.id:
                     raise InvalidInputError(f"Run {base_run_id} is not a run of milestone '{m.milestone_code}'.")
                 carried = [(rs.document.stored_path, rs.document.sha256, rs.document.original_filename, rs.source_type)
-                           for rs in base.sources if rs.processing_status != SourceProcessingStatus.FAILED]
+                           for rs in base.sources if rs.processing_status != SourceProcessingStatus.FAILED
+                           and rs.id not in exclude_source_ids]
             number = (s.scalar(select(func.max(ProcessingRun.run_number))
                                .where(ProcessingRun.milestone_id == m.id)) or 0) + 1
             run = ProcessingRun(milestone_id=m.id, run_number=number, status=RunStatus.CREATED,
@@ -336,6 +338,19 @@ class RunService:
 
         log.info("Run id=%s: %s processed as %s -> %s", run_id, name, detected, status)
         return self.get_run_source(run_id, rs_id)
+
+    def remove_source(self, run_id: int, run_source_id: int) -> RunDetailView:
+        """Remove a document from the milestone's working source set. Source records are immutable, so the
+        run is not edited: a new run is created carrying every other processed document forward. The given
+        run, its records and the stored file stay unchanged in history."""
+        with self.db.session() as s:
+            rs = s.get(RunSource, run_source_id)
+            if rs is None or rs.run_id != run_id:
+                raise NotFoundError(f"Source {run_source_id} is not part of run {run_id}.")
+            milestone_id = s.get(ProcessingRun, run_id).milestone_id
+            name = rs.document.original_filename
+        log.info("Run id=%s: removing %s (run source id=%s) via a new run", run_id, name, run_source_id)
+        return self.create_run(milestone_id, None, run_id, frozenset({run_source_id}))
 
     def get_run_source(self, run_id: int, run_source_id: int) -> RunSourceView:
         with self.db.session() as s:

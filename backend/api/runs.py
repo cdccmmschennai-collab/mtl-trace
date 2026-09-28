@@ -93,6 +93,16 @@ def get_source(run_id: int, run_source_id: int, service: Service):
         raise http_error(exc)
 
 
+@router.delete("/runs/{run_id}/sources/{run_source_id}", response_model=RunOut)
+def remove_source(run_id: int, run_source_id: int, service: Service):
+    """Remove a document from the working source set. Returns the new run that carries every other processed
+    document forward; the given run is left unchanged (source records are immutable)."""
+    try:
+        return service.remove_source(run_id, run_source_id)
+    except Errors as exc:
+        raise http_error(exc)
+
+
 @router.get("/runs/{run_id}/sources/{run_source_id}/rows", response_model=SourceRowsOut)
 def source_rows(run_id: int, run_source_id: int, service: Service,
                 offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):

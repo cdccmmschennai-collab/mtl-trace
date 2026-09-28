@@ -1,12 +1,12 @@
 import { CircleCheck, Combine, Download, SourceTypeIcon, Spinner, TriangleAlert } from "../../components/icons";
-import { ErrorLine, Status, Step, type StepState } from "../../components/ui";
+import { ErrorLine, Status, Step } from "../../components/ui";
 import { api } from "../../api/client";
 import { fmtWhen, nf, plural } from "../../lib/format";
 import type { Workspace } from "./useWorkspace";
 
 const WORKBOOK_KIND = "CONSOLIDATED_WORKBOOK";
 
-export function ConsolidationStep({ ws, state, onDownloaded }: { ws: Workspace; state: StepState; onDownloaded: (file: string) => void }) {
+export function ConsolidationStep({ ws, onDownloaded }: { ws: Workspace; onDownloaded: (file: string) => void }) {
   const { consPhase: phase, cons } = ws;
   const scopeTags = ws.tagCount;
 
@@ -37,7 +37,7 @@ export function ConsolidationStep({ ws, state, onDownloaded }: { ws: Workspace; 
   const barTone = phase === "done" || phase === "running" ? "is-accent" : "is-idle";
 
   return (
-    <Step id="st-cons" title="Consolidate sources" state={state} status={status}>
+    <Step id="st-cons" title="Consolidate sources" status={status} onBlue>
       <div className="mt-panel mt-step-content mt-in-mid">
         {phase === "stale" && (
           <div className="mt-stale">

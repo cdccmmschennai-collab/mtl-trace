@@ -385,6 +385,31 @@ def test_base_run_must_belong_to_the_milestone(client):
     assert r.status_code == 422
 
 
+def test_removing_a_source_opens_a_new_run_without_it(client, spir_fixture):
+    m = locked_milestone(client, make_workbook({"S": scope_rows(4)}))
+    run1 = new_run(client, m["id"])
+    upload(client, f"/api/runs/{run1['id']}/sources", ds_file([ds_row("TAG-001", make="ACME")]), name="ds.xlsx")
+    upload(client, f"/api/runs/{run1['id']}/sources", fixture_workbook([fixture_row("TAG-002", make="S-2")]))
+    cons1 = consolidate(client, run1["id"])
+    con = db(client)
+    before = _run_state(con, run1["id"])
+    mds, spir = client.get(f"/api/runs/{run1['id']}").json()["sources"]
+
+    r = client.delete(f"/api/runs/{run1['id']}/sources/{spir['id']}")
+    assert r.status_code == 200, r.text
+    run2 = r.json()
+    assert run2["id"] != run1["id"] and run2["status"] != "CONSOLIDATED"
+    assert [(s["source_type"], s["document_id"]) for s in run2["sources"]] == [("MDS", mds["document_id"])]
+    assert client.get(f"/api/milestones/{m['id']}/runs").json()[0]["id"] == run2["id"]    # now the current run
+
+    # The removed-from run, its evidence and its outputs are untouched.
+    assert _run_state(con, run1["id"]) == before
+    assert client.get(f"/api/runs/{run1['id']}/consolidation").json()["source_types"] == cons1["source_types"]
+
+    assert client.delete(f"/api/runs/{run2['id']}/sources/{spir['id']}").status_code == 404   # not part of run 2
+    assert client.delete(f"/api/runs/999999/sources/{mds['id']}").status_code == 404
+
+
 def test_consolidated_evidence_is_immutable_in_the_database(client):
     _, run = small_run(client, [ds_row("TAG-001", make="ACME")])
     consolidate(client, run["id"])

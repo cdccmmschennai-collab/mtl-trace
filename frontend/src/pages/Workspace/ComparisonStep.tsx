@@ -1,9 +1,9 @@
 import { CircleCheck, Dot, GitCompareArrows, Spinner } from "../../components/icons";
-import { ErrorLine, Status, Step, type StepState } from "../../components/ui";
+import { ErrorLine, Status, Step } from "../../components/ui";
 import { fmtWhen, nf, plural } from "../../lib/format";
 import type { Workspace } from "./useWorkspace";
 
-export function ComparisonStep({ ws, state }: { ws: Workspace; state: StepState }) {
+export function ComparisonStep({ ws }: { ws: Workspace }) {
   const { cmpPhase: phase, cons, cmp } = ws;
   if (!cons) return null;
 
@@ -24,7 +24,7 @@ export function ComparisonStep({ ws, state }: { ws: Workspace; state: StepState 
   const running = phase === "running";
 
   return (
-    <Step id="st-cmp" title="Compare source values" state={state} status={status}>
+    <Step id="st-cmp" title="Compare source values" status={status} onBlue>
       {phase !== "done" && (
         <div className="mt-panel mt-step-content mt-in-mid">
           <div className="mt-split">
