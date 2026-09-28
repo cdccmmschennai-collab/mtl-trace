@@ -1,7 +1,6 @@
 ﻿import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { Header, Toast, scrollToStep, useToast, type StepState } from "../../components/ui";
-import { nf } from "../../lib/format";
 import { ComparisonStep } from "./ComparisonStep";
 import { ConsolidationStep } from "./ConsolidationStep";
 import { ExcelStep } from "./ExcelStep";
@@ -73,14 +72,7 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
     return () => window.clearTimeout(id);
   }, [ws.ready, show.src, show.cons, show.cmp, show.out]);
 
-  const ref = milestone?.milestone_code ?? (ws.scopeRef || null);
   const scopeStatus = milestone?.scope_status ?? "NONE";
-  const introMeta =
-    scopeStatus === "LOCKED"
-      ? `${nf(ws.tagCount)} tags · scope locked`
-      : scopeStatus === "DRAFT"
-        ? `${nf(ws.tagCount)} tags · draft`
-        : "No scope imported";
 
   return (
     <div className="mt-page" ref={page} style={backdrop.minHeight ? { minHeight: backdrop.minHeight } : undefined}>
@@ -90,10 +82,14 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
         right={<ScopeSelector currentRef={milestone?.milestone_code ?? null} tags={scopeStatus === "NONE" ? 0 : ws.tagCount} />}
       />
       <main className="mt-main" id="main">
+        {/* The headline belongs to scope intake only; once the scope is locked the page starts with the steps. */}
         <div className="mt-intro">
-          <span className="mt-intro-ref mono">{ref ?? "NEW TAG SCOPE"}</span>
-          <h1 className="mt-h1">Engineering data traceability</h1>
-          <span className="mt-intro-meta mono">{milestone === undefined && !ws.loadError ? "Loading…" : introMeta}</span>
+          {milestone !== undefined && !locked && (
+            <h1 className="mt-hero">
+              <span className="mt-hero-lead">Trace your MTL data</span>
+              <span className="mt-hero-sub">from source to final value</span>
+            </h1>
+          )}
         </div>
 
         {ws.loadError && milestone === undefined ? (
@@ -119,7 +115,7 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
 
 /**
  * The page background: pure white at the top, then a static white → blue gradient that starts 70px inside the
- * Source documents step (or 40px above the end of the Scope step before it exists) and completes over 380px.
+ * Source documents step (or 100px above the end of the Scope step before it exists) and completes over 380px.
  */
 function usePageBackdrop(page: RefObject<HTMLDivElement | null>) {
   const [y, setY] = useState<number | null>(null);
@@ -133,7 +129,7 @@ function usePageBackdrop(page: RefObject<HTMLDivElement | null>) {
       const next = src
         ? Math.round(src.getBoundingClientRect().top - top + 70)
         : scope
-          ? Math.round(scope.getBoundingClientRect().bottom - top - 40)
+          ? Math.round(scope.getBoundingClientRect().bottom - top - 100)
           : null;
       setY((prev) => (prev === next ? prev : next));
     };

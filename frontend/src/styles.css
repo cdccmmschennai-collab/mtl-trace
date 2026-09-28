@@ -47,6 +47,11 @@
   --toast-bg: #1c2029;
   --toast-icon: #7fd1a0;
 
+  --banner-radius: 14px;
+  --banner-inner-radius: 13px; /* banner radius minus its 1px border */
+  --banner-border: 1px solid rgba(20, 24, 33, 0.08);
+  --banner-shadow: 0 2px 8px rgba(12, 20, 60, 0.12);
+
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --sans: "Geist Sans", "Geist", "Segoe UI", system-ui, sans-serif;
   --mono: "Geist Mono", ui-monospace, monospace;
@@ -543,31 +548,43 @@ a.btn-primary:hover {
 }
 
 .mt-intro {
-  padding: clamp(36px, 6vw, 56px) 0;
+  padding: clamp(36px, 6vw, 56px) 0 clamp(56px, 9vw, 96px); /* clear gap between the headline and the first step */
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
 }
 
-.mt-intro-ref {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--accent);
-  letter-spacing: 0.02em;
-}
+/* after the scope is locked there is no headline: keep only the top spacing */
+.mt-intro:empty { padding-bottom: 0; }
 
-.mt-h1 {
+/* workspace hero: one two-line editorial headline */
+.mt-hero {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.12em;
+  font-size: clamp(34px, 5.2vw, 56px);
+  line-height: 1.15;
+  letter-spacing: -0.028em;
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  max-width: 100%;
 }
 
-.mt-intro-meta {
-  font-size: 12px;
-  color: var(--ink-label);
+.mt-hero-lead {
+  font-weight: 600;
+  color: var(--ink);
 }
+
+.mt-hero-sub {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
 
 .mt-h2 {
   margin: 0;
@@ -610,6 +627,19 @@ a.btn-primary:hover {
 .mt-h2,
 .mt-status { transition: color 250ms; }
 
+/* Step banners — one treatment for every workflow section (Scope, Sources, Consolidate, Compare, Excel):
+   a single white surface, rounded, subtly bordered and lifted. */
+.mt-step .mt-panel,
+.mt-step .mt-doclist {
+  border-radius: var(--banner-radius);
+  border: var(--banner-border);
+  box-shadow: var(--banner-shadow);
+}
+
+/* strips that touch the banner's top or bottom edge follow its curve */
+.mt-step .mt-stale { border-radius: var(--banner-inner-radius) var(--banner-inner-radius) 0 0; }
+.mt-step .mt-confirm,
+.mt-step .mt-doclist .mt-drop-row { border-radius: 0 0 var(--banner-inner-radius) var(--banner-inner-radius); }
 .mt-step-head {
   position: relative;
   display: flex;
