@@ -168,14 +168,21 @@ def _raw_text(value: object) -> str | None:
     return cell_text(value)
 
 
-def _is_join_key(value: object) -> bool:
+def _is_tag_header(value: object) -> bool:
+    """A join-key header (`TAG NUMBER`) or a qualified tag header (`MXS TAG`, `TAG NUMBER AS PER DOC`)."""
     m = classify_header(value)
-    return m is not None and m.kind == FieldKind.JOIN_KEY
+    return m is not None and (m.kind == FieldKind.JOIN_KEY or m.attribute == Attribute.TAG_NUMBER)
 
 
 def header_row(rows: list[tuple]) -> int | None:
-    """Index of the first row (within the search window) holding a TAG NUMBER join-key header."""
-    return next((i for i, row in enumerate(rows[:HEADER_SEARCH_ROWS]) if any(_is_join_key(v) for v in row)), None)
+    """Index of the first row (within the search window) holding a tag header. Whether that row has a usable
+    join key is decided by `extract_sheet`, which reports exactly what it found."""
+    return next((i for i, row in enumerate(rows[:HEADER_SEARCH_ROWS]) if any(_is_tag_header(v) for v in row)), None)
+
+
+# Identification evidence strength — the strongest kind any sheet shows decides. A sheet *titled*
+# `TEST CERTIFICATE` outranks a header such as `ASSET SERIAL NUMBER` that merely mentions another type.
+NO_EVIDENCE, HEADER_KEYWORD, EVIDENCE_HEADER, SHEET_TITLE = 0, 1, 2, 3
 
 
 class TabularAdapter:
@@ -195,20 +202,25 @@ class TabularAdapter:
         t = normalize_header(text)
         return any(contains_phrase(t, k) for k in self._keywords)
 
+    def _sheet_strength(self, name: str, rows: list[tuple]) -> int:
+        if normalize_header(name) in self._sheet_names or self._named(name):
+            return SHEET_TITLE
+        if any(normalize_header(v) in self._evidence for row in rows[:HEADER_SEARCH_ROWS] for v in row):
+            return EVIDENCE_HEADER
+        header = header_row(rows)
+        if header is not None and any(self._named(v) for v in rows[header]):
+            return HEADER_KEYWORD
+        return NO_EVIDENCE
+
+    def evidence(self, book: Workbook) -> tuple[int, list[str]]:
+        """(strongest evidence kind, every sheet showing any evidence). Never reads data cells for keywords.
+        The strength decides only *between document types* (registry); within this type, every sheet with
+        evidence is a candidate, so a second look-alike sheet is refused as ambiguous, never ignored."""
+        strengths = {name: self._sheet_strength(name, rows) for name, rows in book.sheets.items()}
+        return max(strengths.values(), default=NO_EVIDENCE), [n for n, s in strengths.items() if s]
+
     def evidence_sheets(self, book: Workbook) -> list[str]:
-        """Sheets carrying this document type's identification evidence (never data cells for keywords)."""
-        hits = []
-        for name, rows in book.sheets.items():
-            if normalize_header(name) in self._sheet_names or self._named(name):
-                hits.append(name)
-                continue
-            if any(normalize_header(v) in self._evidence for row in rows[:HEADER_SEARCH_ROWS] for v in row):
-                hits.append(name)
-                continue
-            header = header_row(rows)
-            if header is not None and any(self._named(v) for v in rows[header]):
-                hits.append(name)
-        return hits
+        return self.evidence(book)[1]
 
     def identify(self, book: Workbook, requested: bool = False) -> Identification:
         hits = self.evidence_sheets(book)
@@ -248,51 +260,92 @@ def extract_sheet(source_type: str, book: Workbook, sheet_name: str) -> Extracti
     ext = Extraction(source_type, sheet_name)
     doc = f"'{book.file_name}', sheet '{sheet_name}'"
 
+    def missing_join_key(found: list[str], why: str) -> Extraction:
+        ext.issues.append(_err(
+            "MISSING_FIELD",
+            f"{doc}: {why} (accepted: {ACCEPTED_TAG_KEY}; or, when no such column exists, one "
+            f"'<{source_type}> TAG' column alongside one 'TAG NUMBER AS PER DOC' column). "
+            f"Headers found: {', '.join(found) or '(none)'}.", value="TAG NUMBER (join key)"))
+        return ext
+
     header_idx = header_row(rows)
     if header_idx is None:
         found = next(([str(v).strip() for v in r if cell_text(v)] for r in rows[:HEADER_SEARCH_ROWS]
                       if any(cell_text(v) for v in r)), [])
         ext.headers_found = found
-        ext.issues.append(_err(
-            "MISSING_FIELD",
-            f"{doc}: no header row contains the join key TAG NUMBER (accepted: {ACCEPTED_TAG_KEY}). "
-            f"Headers found: {', '.join(found) or '(none)'}.", value="TAG NUMBER (join key)"))
-        return ext
+        return missing_join_key(found, "no header row contains a TAG NUMBER column")
 
     header = rows[header_idx]
     ext.header_row = header_idx + 1
     ext.headers_found = [str(v) for v in header if cell_text(v) is not None]
     headers_list = ", ".join(repr(h) for h in ext.headers_found)
 
+    def where(cols) -> str:
+        return ", ".join(f"{get_column_letter(i + 1)} {str(header[i]).strip()!r}" for i, *_ in cols)
+
     # Classify every header once; group columns by the concept they carry.
-    by_key: dict[str, list[tuple[int, HeaderMeaning]]] = {}
+    classified: list[tuple[int, HeaderMeaning]] = []
     for i, v in enumerate(header):
         m = classify_header(v)
         if m is not None:
-            by_key.setdefault(m.key, []).append((i, m))
+            classified.append((i, m))
+
+    # A value header naming ANOTHER source type is a cross-reference (`ASSET SERIAL NUMBER` on a Test
+    # Certificate), not this document's value: reported, never bound.
+    foreign = [(i, m) for i, m in classified
+               if m.kind == FieldKind.ATTRIBUTE and m.source_qualifier not in (None, source_type)]
+    classified = [c for c in classified if c not in foreign]
+
+    # Join key. Bare `TAG NUMBER` columns are the key. Without one, the document's own-type tag column
+    # (`MXS TAG`) is the key exactly when one `… AS PER DOC` tag column carries the printed tag beside it.
+    join_cands = [(i, m) for i, m in classified if m.kind == FieldKind.JOIN_KEY]
+    if not join_cands:
+        tags = [(i, m) for i, m in classified if m.attribute == Attribute.TAG_NUMBER]
+        own = [(i, m) for i, m in tags if m.source_qualifier == source_type and not m.as_per_doc]
+        printed = [(i, m) for i, m in tags if m.as_per_doc]
+        if len(own) == 1 and len(printed) == 1 and len(tags) == 2:
+            classified = [(i, HeaderMeaning(FieldKind.JOIN_KEY, JOIN_KEY)) if (i, m) == own[0] else (i, m)
+                          for i, m in classified]
+            join_cands = [(own[0][0], HeaderMeaning(FieldKind.JOIN_KEY, JOIN_KEY))]
+        else:
+            return missing_join_key(
+                ext.headers_found,
+                f"no TAG NUMBER join key column, and the tag columns found ({where(tags) or 'none'}) do not "
+                f"identify one safely")
+
+    by_key: dict[str, list[tuple[int, HeaderMeaning]]] = {}
+    for i, m in classified:
+        by_key.setdefault(m.key, []).append((i, m))
 
     def bind(i: int, key: str, label: str) -> None:
         ext.mapping.append(BoundField(key, label, get_column_letter(i + 1), str(header[i])))
 
     def ambiguous(label: str, cands: list[tuple[int, HeaderMeaning]]) -> None:
-        where = ", ".join(f"{get_column_letter(i + 1)} {str(header[i])!r}" for i, _ in cands)
         ext.issues.append(_err(
             "AMBIGUOUS_FIELD",
-            f"{doc}: {label} matches {len(cands)} columns ({where}); refusing to choose one. "
+            f"{doc}: {label} matches {len(cands)} columns ({where(cands)}); refusing to choose one. "
             f"Headers found: {headers_list}.", value=label))
 
-    join_cands = by_key.get(JOIN_KEY, [])
     if len(join_cands) > 1:
         ambiguous("TAG NUMBER (join key)", join_cands)
     else:
         bind(join_cands[0][0], JOIN_KEY, "TAG NUMBER (join key)")
     join_col = join_cands[0][0]
 
+    if foreign:
+        ext.issues.append(_warn(
+            "CROSS_REFERENCE_FIELD",
+            f"{doc}: {where(foreign)} name{'s' if len(foreign) == 1 else ''} another source type "
+            f"({', '.join(sorted({m.source_qualifier for _, m in foreign}))}); "
+            f"{'it is' if len(foreign) == 1 else 'they are'} a cross-reference, not this document's value, "
+            f"and {'is' if len(foreign) == 1 else 'are'} not extracted.",
+            value=", ".join(str(header[i]).strip() for i, _ in foreign)))
+
     attr_cols: dict[Attribute, int] = {}
     not_provided: list[str] = []
     for attribute in ATTRIBUTES:
         label = ATTRIBUTE_LABELS[attribute]
-        cands = [(i, m) for i, m in (c for cs in by_key.values() for c in cs) if m.attribute == attribute]
+        cands = [(i, m) for i, m in classified if m.attribute == attribute]
         if len(cands) == 1:
             attr_cols[attribute] = cands[0][0]
             bind(cands[0][0], cands[0][1].key, label)

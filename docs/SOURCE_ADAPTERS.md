@@ -19,7 +19,21 @@ varies by document type. So:
 |---|---|---|
 | MDS — Data Sheet | `backend/extraction/datasheet.py` | **enabled**, verified on the real file |
 | SPIR (MIR) | `backend/extraction/spir.py` | **enabled**, verified on the real file |
-| ASSET, GA, MXS, MTC, MOM | — | awaiting real files |
+| MXS, MTC, MOM | `backend/extraction/verified.py` | **enabled**, verified on the real files (2026-11-10) |
+| ASSET, GA | — (keyword identification only) | awaiting real files |
+
+Real files live in `SAMPLE FILES/<type folder>/` (git-ignored); `tests/conftest.py` also accepts the older
+`input/sources/…` location. `tests/test_source_variety.py` runs all five through extraction, a simulated
+revision (renamed sheet, reversed columns, extra columns, title rows) and a full API run.
+
+## Identification
+
+Evidence is ranked: **sheet title** (exact verified title, or a type keyword in the title) > **verified
+evidence header** > **type keyword in the header row**. The type with the strongest evidence wins; a tie is
+`SOURCE_TYPE_AMBIGUOUS` (the user selects the type). An explicit selection is refused when another type has
+stronger evidence. Within one type, every sheet with any evidence is a candidate — two look-alike sheets are
+`SHEET_AMBIGUOUS`, never one silently chosen. The header row is the first row (within 20) holding a tag
+header, so title blocks above the table are tolerated.
 
 ## Keyword discovery
 
@@ -52,7 +66,9 @@ Binding outcomes:
 
 | Situation | Result |
 |---|---|
-| join key: none / several | `MISSING_FIELD` / `AMBIGUOUS_FIELD` — error, document `FAILED` |
+| join key: no bare tag column, but exactly one own-type tag (`MXS TAG`) + exactly one `… AS PER DOC` tag | the own-type column is the join key |
+| join key: none / several / any other tag combination | `MISSING_FIELD` / `AMBIGUOUS_FIELD` — error, document `FAILED` |
+| attribute header naming another source type (`ASSET SERIAL NUMBER` on an MTC) | `CROSS_REFERENCE_FIELD` — warning; not bound |
 | attribute: none | `FIELD_NOT_PROVIDED` — warning; attribute not provided, nothing filled in |
 | attribute: several | `AMBIGUOUS_FIELD` — error (never choose a column) |
 | no attribute column at all | `NO_ATTRIBUTE_FIELD` — error |
@@ -78,6 +94,26 @@ is skipped. Not extracted (reported only): equipment description, size & rating,
 weight, country, manufacture month/year, vendor details, remarks, name, date.
 464 rows · 464 unique keys · 0 duplicates · 464 in scope · 0 outside · 253 scope tags without a row ·
 TAG/MAKE/MODEL/SERIAL/PART populated 377/458/355/331/370 · SPIR TAG equals key 357, differs 20.
+
+## Verified on `0903_4391-MTL-MXS PRIORITY-2_COMPLETED.xlsx` (sheet `MTL-DOC.DATA MXS`)
+
+No bare `TAG NUMBER`: join key `MXS TAG` (B), printed tag ` TAG NUMBER AS PER DOC` (F); MAKE/MODEL/SERIAL/PART
+in I–L; provenance `DOC  REFERENCE-DOC IDB`, `DOCUNEMT REFERENCE- ORIGINAL` (typo as found), `PAGE NO`.
+Sheet `PRD ASSIGNED & COUNT` is skipped. 234 rows; printed tag equals key on 152 of 161 filled.
+
+## Verified on `0905_4391-TEST CERTIFICATE PRIORITY-2_COMPLETED.xlsx` (sheet `TEST CERTIFICATE`)
+
+Join key `TAG NUMBER`; printed tag `TEST CERTIFICATE TAG NUMBER` (F); SERIAL NUMBER (J) comes *before* MAKE (M),
+PART NUMBER (N), MODEL (O). `ASSET SERIAL NUMBER` (K) is a cross-reference (`CROSS_REFERENCE_FIELD`), empty in
+this file. Sheet `PRD-COUNT` is skipped. 39 rows. All 39 `TEST CERTIFICATE TAG NUMBER` values read `NG-MTC-…`;
+**confirmed by the user (2026-11-10): this is the tag as per the document** — extracted and compared as found.
+FINAL TAG stays the milestone tag; with all five real sources the 39 rows come out 27 REVIEW REQUIRED (MTC the
+only TAG source) and 12 MISMATCH (another source carries a different TAG).
+
+## Verified on `0904_4391-MOM PRIORITY-2_COMPLETED.xlsx` (sheet `O&M`)
+
+Join key `TAG NUMBER`; no printed-tag column (`FIELD_NOT_PROVIDED` warning); MAKE/MODEL/SERIAL/PART in I–L;
+provenance `O&M REFERENCE-DOC IDB`, `O&M REFERENCE-ORIGINAL`, `PAGE NO`. Sheet `PRD-COUNT` is skipped. 136 rows.
 
 ## Oracle deviations (ORIGINAL BACKUP)
 

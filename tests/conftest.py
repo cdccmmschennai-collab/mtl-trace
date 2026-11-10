@@ -8,9 +8,23 @@ from fastapi.testclient import TestClient
 from backend.config import REPO_ROOT, Settings
 from backend.main import create_app
 
+def _real(*candidates: Path) -> Path:
+    """First existing location of a real (git-ignored, local-only) file; else the first candidate, so tests skip."""
+    return next((p for p in candidates if p.exists()), candidates[0])
+
+
+SAMPLES = REPO_ROOT / "SAMPLE FILES"
 REAL_SCOPE_FILE = REPO_ROOT / "input" / "references" / "5.MTL-DATA MISMATCH COMPARISION.xlsx"
-REAL_DATASHEET_FILE = REPO_ROOT / "input" / "sources" / "datasheet" / "0904_4391-DATA SHEET PRIORITY-2_COMPLETED.xlsx"
-REAL_SPIR_FILE = REPO_ROOT / "input" / "sources" / "spir" / "4391-SPIR DATA PRIORITY-2_COMPLETED.xlsx"
+REAL_DATASHEET_FILE = _real(REPO_ROOT / "input" / "sources" / "datasheet" / "0904_4391-DATA SHEET PRIORITY-2_COMPLETED.xlsx",
+                            SAMPLES / "DATA SHEET(MDS)" / "0904_4391-DATA SHEET PRIORITY-2_COMPLETED.xlsx")
+REAL_SPIR_FILE = _real(REPO_ROOT / "input" / "sources" / "spir" / "4391-SPIR DATA PRIORITY-2_COMPLETED.xlsx",
+                       SAMPLES / "SPIR(MIR)" / "4391-SPIR DATA PRIORITY-2_COMPLETED.xlsx")
+REAL_MXS_FILE = SAMPLES / "CROSS SECTIONAL(MXS)" / "0903_4391-MTL-MXS PRIORITY-2_COMPLETED.xlsx"
+REAL_MTC_FILE = SAMPLES / "TEST CERTIFICATE(MTC)" / "0905_4391-TEST CERTIFICATE PRIORITY-2_COMPLETED.xlsx"
+REAL_MOM_FILE = SAMPLES / "O&M (MOM)" / "0904_4391-MOM PRIORITY-2_COMPLETED.xlsx"
+# Every real source, by type — the five document shapes supplied so far.
+REAL_SOURCE_FILES = {"MDS": REAL_DATASHEET_FILE, "SPIR": REAL_SPIR_FILE, "MXS": REAL_MXS_FILE,
+                     "MTC": REAL_MTC_FILE, "MOM": REAL_MOM_FILE}
 ORIGINAL_BACKUP_FILE = REPO_ROOT / "5.MTL-DATA MISMATCH COMPARISION - ORIGINAL BACKUP.xlsx"
 # Header row of the real Data Sheet, in its real order (used to build realistic synthetic sources).
 DS_HEADERS = ["S.NO", "TAG NUMBER", "EQUIPMENT DESCRIPTION", "DATASHEET REFERENCE-ORIGINAL", " TAG NUMBER AS PER DOC",
@@ -77,6 +91,15 @@ def real_spir_bytes() -> bytes:
     if not REAL_SPIR_FILE.exists():
         pytest.skip("real SPIR workbook not present")
     return REAL_SPIR_FILE.read_bytes()
+
+
+@pytest.fixture
+def real_sources() -> dict[str, tuple[str, bytes]]:
+    """{source type: (file name, bytes)} for all five real source files."""
+    missing = [p.name for p in REAL_SOURCE_FILES.values() if not p.exists()]
+    if missing:
+        pytest.skip(f"real source files not present: {', '.join(missing)}")
+    return {t: (p.name, p.read_bytes()) for t, p in REAL_SOURCE_FILES.items()}
 
 
 def without_column(data: bytes, sheet: str, header: str) -> bytes:

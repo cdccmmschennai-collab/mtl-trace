@@ -56,10 +56,10 @@ def test_create_and_list_runs(client):
     assert client.get("/api/runs/999").status_code == 404
 
 
-def test_source_types_all_available_and_mds_spir_verified(client):
+def test_source_types_all_available_and_real_file_types_verified(client):
     types = {t["code"]: (t["adapter_available"], t["verified"]) for t in client.get("/api/source-types").json()}
     assert types == {"ASSET": (True, False), "MDS": (True, True), "SPIR": (True, True), "GA": (True, False),
-                     "MXS": (True, False), "MTC": (True, False), "MOM": (True, False)}
+                     "MXS": (True, True), "MTC": (True, True), "MOM": (True, True)}
 
 
 # ---------------------------------------------------------------- real Data Sheet
@@ -186,8 +186,12 @@ def test_unnamed_file_is_accepted_for_an_explicitly_chosen_unverified_type(clien
     auto = upload(client, f"/api/runs/{run['id']}/sources", data, name="a.xlsx").json()
     assert auto["processing_status"] == "FAILED" and auto["errors"][0]["code"] == "SOURCE_TYPE_UNKNOWN"
     run2 = new_run(client, m["id"])
-    chosen = upload(client, f"/api/runs/{run2['id']}/sources", data, name="a.xlsx", source_type="MTC").json()
-    assert chosen["source_type"] == "MTC" and chosen["attributes_provided"] == ["MAKE", "MODEL"]
+    chosen = upload(client, f"/api/runs/{run2['id']}/sources", data, name="a.xlsx", source_type="GA").json()
+    assert chosen["source_type"] == "GA" and chosen["attributes_provided"] == ["MAKE", "MODEL"]
+    # A verified type still needs its own evidence in the file.
+    run3 = new_run(client, m["id"])
+    refused = upload(client, f"/api/runs/{run3['id']}/sources", data, name="a.xlsx", source_type="MTC").json()
+    assert refused["processing_status"] == "FAILED" and refused["errors"][0]["code"] == "NOT_THIS_SOURCE_TYPE"
 
 
 def test_non_workbook_is_rejected(client):

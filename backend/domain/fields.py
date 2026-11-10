@@ -23,6 +23,12 @@ The whole remaining phrase must equal a core phrase: `PART NUMBER REMARKS`, `VAL
 or `VENDOR NAME` never bind. Only these five attributes are discovered (the MTL comparison attributes);
 every other header is reported as found and left alone.
 
+Sheet-level rules (applied in `backend.extraction.tabular`, which knows the document's own type):
+    - an attribute header naming ANOTHER source type (`ASSET SERIAL NUMBER` in a Test Certificate) is a
+      cross-reference, not this document's value — reported, never bound;
+    - with no bare tag column, the one own-type tag column (`MXS TAG`) is the join key when the sheet also
+      has exactly one `… AS PER DOC` tag column (the tag printed on the document). Anything else: refused.
+
 Provenance is discovered the same way, by whole-word keywords, and may bind several columns:
     `IDB` / `DOKNR`        → document_idb        (DATASHEET REFERENCE-DOC IDB · DOKNR INITIAL/NORMAL/LCS)
     `REF` / `REFERENCE`    → document_reference  (DATASHEET REFERENCE-ORIGINAL · SPIR REF-INITIAL/NORMAL/LCS)
@@ -48,6 +54,13 @@ class HeaderMeaning:
     key: str                                  # TAG_KEY · TAG_AS_PER_DOC · MAKE … · DOCUMENT_REFERENCE · PAGE_NO
     attribute: Attribute | None = None
     role: str | None = None                   # provenance role
+    # Qualifiers found on the header. The sheet-level rules (`backend.extraction.tabular`) use them:
+    #   source_qualifier — the source-type code a header names (`SPIR TAG NUMBER` → SPIR,
+    #                      `ASSET SERIAL NUMBER` → ASSET); a header naming *another* type than the
+    #                      document's own is a cross-reference, not this document's value
+    #   as_per_doc       — the `AS PER DOC` suffix: always the value printed on the document
+    source_qualifier: str | None = None
+    as_per_doc: bool = False
 
 
 JOIN_KEY = "TAG_KEY"
@@ -65,24 +78,27 @@ ATTRIBUTE_KEYS: dict[Attribute, str] = {
     Attribute.SERIAL_NUMBER: "SERIAL_NUMBER", Attribute.PART_NUMBER: "PART_NUMBER",
 }
 DOCUMENT_SUFFIXES = ("AS PER DOCUMENT", "AS PER DOC")
-# Source-type phrases (codes, summary codes, keywords), longest first so `O & M MANUAL` wins over `O & M`.
-SOURCE_PHRASES = tuple(sorted({normalize_header(p) for t in SOURCE_TYPES.values()
-                               for p in (t.code, t.summary_code, *t.keywords)}, key=len, reverse=True))
+# Source-type phrases (codes, summary codes, keywords) → the type they name, longest first so
+# `O & M MANUAL` wins over `O & M` and `TEST CERTIFICATE` is read whole.
+SOURCE_PHRASE_TYPE: dict[str, str] = {normalize_header(p): t.code for t in SOURCE_TYPES.values()
+                                      for p in (t.code, t.summary_code, *t.keywords)}
+SOURCE_PHRASES = tuple(sorted(SOURCE_PHRASE_TYPE, key=len, reverse=True))
 PAGE_CORE = frozenset({"PAGE", "PAGE NO"})
 
 
-def _strip_qualifiers(text: str) -> tuple[str, bool]:
-    qualified = False
+def _strip_qualifiers(text: str) -> tuple[str, bool, str | None]:
+    """(core phrase, `AS PER DOC` suffix present, source-type code named by a leading/trailing phrase)."""
+    as_per_doc = False
     for suffix in DOCUMENT_SUFFIXES:
         if text.endswith(" " + suffix):
-            text, qualified = text[: -len(suffix) - 1], True
+            text, as_per_doc = text[: -len(suffix) - 1], True
             break
     for phrase in SOURCE_PHRASES:
         if text.startswith(phrase + " "):
-            return text[len(phrase) + 1:], True
+            return text[len(phrase) + 1:], as_per_doc, SOURCE_PHRASE_TYPE[phrase]
         if text.endswith(" " + phrase):
-            return text[: -len(phrase) - 1], True
-    return text, qualified
+            return text[: -len(phrase) - 1], as_per_doc, SOURCE_PHRASE_TYPE[phrase]
+    return text, as_per_doc, None
 
 
 def contains_phrase(text: str, phrase: str) -> bool:
@@ -95,14 +111,16 @@ def classify_header(value: object) -> HeaderMeaning | None:
     text = normalize_header(value)
     if not text:
         return None
-    core, qualified = _strip_qualifiers(text)
+    core, as_per_doc, source = _strip_qualifiers(text)
     if core in TAG_CORE:
-        if qualified:
-            return HeaderMeaning(FieldKind.ATTRIBUTE, ATTRIBUTE_KEYS[Attribute.TAG_NUMBER], Attribute.TAG_NUMBER)
+        if as_per_doc or source:
+            return HeaderMeaning(FieldKind.ATTRIBUTE, ATTRIBUTE_KEYS[Attribute.TAG_NUMBER], Attribute.TAG_NUMBER,
+                                 source_qualifier=source, as_per_doc=as_per_doc)
         return HeaderMeaning(FieldKind.JOIN_KEY, JOIN_KEY)
     for attribute, phrases in ATTRIBUTE_CORE.items():
         if core in phrases:
-            return HeaderMeaning(FieldKind.ATTRIBUTE, ATTRIBUTE_KEYS[attribute], attribute)
+            return HeaderMeaning(FieldKind.ATTRIBUTE, ATTRIBUTE_KEYS[attribute], attribute,
+                                 source_qualifier=source, as_per_doc=as_per_doc)
     words = set(text.split())
     if words & {"IDB", "DOKNR"}:
         return HeaderMeaning(FieldKind.PROVENANCE, "DOCUMENT_IDB", role="document_idb")

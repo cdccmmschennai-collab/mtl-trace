@@ -81,7 +81,7 @@ def test_production_registry_has_no_fixture_adapter():
     from backend.extraction.spir import SPIR
     assert list(registry.ADAPTERS) == list(SOURCE_TYPES)
     assert registry.ADAPTERS["MDS"] is DATASHEET and registry.ADAPTERS["SPIR"] is SPIR
-    assert {c for c, a in registry.ADAPTERS.items() if a.config.verified} == {"MDS", "SPIR"}
+    assert {c for c, a in registry.ADAPTERS.items() if a.config.verified} == {"MDS", "SPIR", "MXS", "MTC", "MOM"}
     assert not any("fixture" in imp for m, imps in modules() for imp in imps)
 
 
