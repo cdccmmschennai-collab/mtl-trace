@@ -164,7 +164,14 @@ def _header(ws, row: int, col: int, value: str, fill: PatternFill, center: bool 
     c.alignment = Alignment(horizontal="center" if center else None, vertical="bottom")
 
 
+def _text(value):
+    """Display form of a cell: every text is written in upper case. Presentation only — the canonical layer,
+    provenance and the comparison keep the value exactly as read (comparison is already case-insensitive)."""
+    return value.upper() if isinstance(value, str) else value
+
+
 def _data(ws, row: int, col: int, value) -> None:
+    value = _text(value)
     c = ws.cell(row=row, column=col, value=value)
     c.border = BORDER
     if isinstance(value, str):
@@ -254,16 +261,16 @@ def validate_workbook(data: bytes, model: WorkbookModel) -> list[str]:
             problems.append(f"{sheet.sheet_name}: {ws.max_row - 1} data rows, expected {n}")
         for i, scope in enumerate(model.scope):
             row = [c.value for c in ws[i + 2]]
-            if row[1] != scope.tag_number:
+            if row[1] != _text(scope.tag_number):
                 problems.append(f"{sheet.sheet_name} row {i + 2}: tag {row[1]!r}, expected {scope.tag_number!r}")
                 break
-            if scope.s_no is not None and (row[0] != scope.s_no or not isinstance(row[0], str)):
+            if scope.s_no is not None and (row[0] != _text(scope.s_no) or not isinstance(row[0], str)):
                 problems.append(f"{sheet.sheet_name} row {i + 2}: S.NO {row[0]!r} is not the text {scope.s_no!r}")
                 break
             source_values = row[n_scope:n_scope + n_src]
             # Guard 4 — nothing in a source column that the canonical layer does not hold.
             for src, got in zip(model.sources, source_values):
-                want = sheet.cells[i][src.source_type].value
+                want = _text(sheet.cells[i][src.source_type].value)
                 if (got or None) != (want or None):
                     problems.append(f"{sheet.sheet_name} row {i + 2}: {src.source_type} holds {got!r}, canonical {want!r}")
             remark, final, status = row[n_scope + n_src], row[n_scope + n_src + 1], row[n_scope + n_src + 2]
@@ -279,7 +286,7 @@ def validate_workbook(data: bytes, model: WorkbookModel) -> list[str]:
             for label, got, want in (("REMARKS", remark, model.column(model.remarks, sheet)[i]),
                                      ("FINAL", final, model.column(model.finals, sheet)[i]),
                                      ("STATUS", status, model.column(model.statuses, sheet)[i])):
-                if (got or None) != (want or None):
+                if (got or None) != (_text(want) or None):
                     problems.append(f"{sheet.sheet_name} row {i + 2}: {label} {got!r}, comparison result {want!r}")
 
     ws = wb[SUMMARY_SHEET]
@@ -287,7 +294,7 @@ def validate_workbook(data: bytes, model: WorkbookModel) -> list[str]:
         problems.append(f"SUMMERY: headers {[c.value for c in ws[1]]} differ from the expected layout")
     else:
         for i, sheet in enumerate(model.sheets, start=2):
-            if ws.cell(row=i, column=2).value != sheet.summary_description:
+            if ws.cell(row=i, column=2).value != _text(sheet.summary_description):
                 problems.append(f"SUMMERY row {i}: description {ws.cell(row=i, column=2).value!r}")
             for j, src in enumerate(model.sources):
                 got = ws.cell(row=i, column=3 + j).value

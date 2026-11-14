@@ -103,7 +103,10 @@ class ScopeOut(_Out):
 
 class RunCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
-    base_run_id: int | None = None          # start from this run's successfully processed documents
+
+
+class SourceRetype(BaseModel):
+    source_type: str = Field(min_length=1, max_length=20)
 
 
 class SourceTypeOut(_Out):
@@ -174,6 +177,7 @@ class RunSourceOut(_Out):
     rows_without_tag_key: list[int]
     errors: list[IssueOut]
     warnings: list[IssueOut]
+    notes: list[IssueOut] = []
 
 
 class RunOut(_Out):
@@ -188,6 +192,12 @@ class RunOut(_Out):
     created_at: datetime
     notes: str | None
     sources: list[RunSourceOut]
+
+
+class SessionOut(_Out):
+    """The tool's one working session: the locked scope and its single run."""
+    milestone: MilestoneDetail
+    run: RunOut
 
 
 class SourceIdentificationOut(_Out):
@@ -205,6 +215,7 @@ class SourceIdentificationOut(_Out):
     skipped_sheets: list[SkippedSheet]
     errors: list[IssueOut]
     warnings: list[IssueOut]
+    notes: list[IssueOut] = []
 
 
 class SourceRowOut(_Out):

@@ -180,7 +180,8 @@ def test_real_mds_columns_equal_original_backup(client, data_dir, real_run):
         mine = list(ours[name].iter_rows(min_row=2, values_only=True))
         assert [r[1] for r in mine] == [r[1] for r in ref[1:] if r[1] is not None]
         for got_row, ref_row in zip(mine, ref[1:]):
-            want = None if ref_row[col] in (None, "") else str(ref_row[col])
+            # The workbook writes every text upper-cased; otherwise the value is the backup's, character for character.
+            want = None if ref_row[col] in (None, "") else str(ref_row[col]).upper()
             if (name, ref_row[1]) in KNOWN_BACKUP_DEVIATIONS:
                 assert (got_row[5], want) == KNOWN_BACKUP_DEVIATIONS[(name, ref_row[1])]
                 seen += 1
@@ -330,101 +331,80 @@ def test_two_sources_in_one_run(client, data_dir, spir_fixture):
     assert not any(h and ("GA" in h.split() or "MXS" in h or "MTC" in h or "MOM" in h or "ASSET" in h) for h in headers)
 
 
-# ================================================================ Test C — run isolation
+# ================================================================ Test C — single run: the source set changes in place
 
-def _run_state(con, run_id: int) -> tuple:
-    return (con.execute("select id, milestone_tag_id, attribute, source_type, state, raw_value, source_record_ids "
-                        "from canonical_cell where run_id = ? order by id", (run_id,)).fetchall(),
-            con.execute("select id, stored_path, sha256 from output_artifact where run_id = ? order by id", (run_id,)).fetchall(),
-            con.execute("select count(*) from source_record where run_id = ?", (run_id,)).fetchone(),
-            con.execute("select status from processing_run where id = ?", (run_id,)).fetchone())
+def _result_counts(con, run_id: int) -> tuple:
+    return tuple(con.execute(f"select count(*) from {t} where run_id = ?", (run_id,)).fetchone()[0]
+                 for t in ("canonical_cell", "run_consolidation", "output_artifact", "run_comparison", "comparison_result"))
 
 
-def test_earlier_run_unchanged_when_later_run_adds_a_source(client, data_dir, spir_fixture):
+def test_adding_a_source_after_comparison_discards_and_rebuilds_results(client, data_dir, spir_fixture):
     m = locked_milestone(client, make_workbook({"S": scope_rows(4)}))
-    run1 = new_run(client, m["id"])
-    data = ds_file([ds_row("TAG-001", make="ACME"), ds_row("TAG-002", make="MDS-2")])
-    upload(client, f"/api/runs/{run1['id']}/sources", data, name="ds.xlsx")
-    cons1 = consolidate(client, run1["id"])
+    run = new_run(client, m["id"])
+    upload(client, f"/api/runs/{run['id']}/sources",
+           ds_file([ds_row("TAG-001", make="ACME"), ds_row("TAG-002", make="MDS-2")]), name="ds.xlsx")
+    cons1 = consolidate(client, run["id"])
+    assert client.post(f"/api/runs/{run['id']}/consolidate").status_code == 409       # same source set: once
+    assert client.post(f"/api/runs/{run['id']}/compare").status_code == 201
     con = db(client)
-    before = _run_state(con, run1["id"])
-    files_before = {o["stored_path"]: (data_dir / o["stored_path"]).read_bytes() for o in cons1["outputs"]}
+    old_files = [data_dir / o["stored_path"] for o in client.get(f"/api/runs/{run['id']}/outputs").json()]
+    assert len(old_files) == 3 and all(p.exists() for p in old_files)
 
-    # A consolidated run is frozen.
-    r = upload(client, f"/api/runs/{run1['id']}/sources", fixture_workbook([fixture_row("TAG-001")]))
-    assert r.status_code == 409 and "new run" in r.json()["detail"]
-    assert client.post(f"/api/runs/{run1['id']}/consolidate").status_code == 409
-
-    # Run 2 starts from run 1's documents and adds a second source.
-    r = client.post(f"/api/milestones/{m['id']}/runs", json={"base_run_id": run1["id"], "notes": "add SPIR"})
+    # A further document goes into the same run; the results of the previous source set are discarded.
+    r = upload(client, f"/api/runs/{run['id']}/sources",
+               fixture_workbook([fixture_row("TAG-001", make="ACME SPIR"), fixture_row("TAG-004", make="S-4")]))
     assert r.status_code == 201, r.text
-    run2 = r.json()
-    assert [s["source_type"] for s in run2["sources"]] == ["MDS"]
-    assert run2["sources"][0]["document_id"] == cons1["documents"][0]["document_id"]      # same immutable document
-    upload(client, f"/api/runs/{run2['id']}/sources",
-           fixture_workbook([fixture_row("TAG-001", make="ACME SPIR"), fixture_row("TAG-004", make="S-4")]))
-    cons2 = consolidate(client, run2["id"])
-    assert [t["code"] for t in cons2["source_types"]] == ["MDS", "SPIR"]
+    assert client.get(f"/api/runs/{run['id']}").json()["status"] == "DOCUMENTS_UPLOADED"
+    assert _result_counts(con, run["id"]) == (0, 0, 0, 0, 0)
+    assert not any(p.exists() for p in old_files)
+    assert client.get(f"/api/runs/{run['id']}/consolidation").status_code == 404
+    assert client.get(f"/api/runs/{run['id']}/comparison").status_code == 404
+
+    cons2 = consolidate(client, run["id"])
+    assert cons2["run_id"] == run["id"] and [t["code"] for t in cons2["source_types"]] == ["MDS", "SPIR"]
     assert cons2["canonical_cell_count"] == 2 * cons1["canonical_cell_count"]
-    assert all("/run-002/" in o["stored_path"] for o in cons2["outputs"])
-
-    # Run 1: database rows, files and status exactly as before.
-    assert _run_state(con, run1["id"]) == before
-    for path, content in files_before.items():
-        assert (data_dir / path).read_bytes() == content
-    assert client.get(f"/api/runs/{run1['id']}/consolidation").json()["source_types"] == cons1["source_types"]
-    assert con.execute("select count(*) from source_document where sha256 = ?",
-                       (hashlib.sha256(data).hexdigest(),)).fetchone()[0] == 1
+    assert all("/run-001/" in o["stored_path"] for o in cons2["outputs"])
+    assert client.post(f"/api/runs/{run['id']}/compare").status_code == 201
+    assert len(client.get(f"/api/milestones/{m['id']}/runs").json()) == 1
 
 
-def test_base_run_must_belong_to_the_milestone(client):
-    a = locked_milestone(client, make_workbook({"S": scope_rows(2)}), code="A")
-    b = locked_milestone(client, make_workbook({"S": scope_rows(2)}), code="B")
-    run_a = new_run(client, a["id"])
-    r = client.post(f"/api/milestones/{b['id']}/runs", json={"base_run_id": run_a["id"]})
-    assert r.status_code == 422
-
-
-def test_removing_a_source_opens_a_new_run_without_it(client, spir_fixture):
+def test_removing_a_source_edits_the_same_run(client, data_dir, spir_fixture):
     m = locked_milestone(client, make_workbook({"S": scope_rows(4)}))
-    run1 = new_run(client, m["id"])
-    upload(client, f"/api/runs/{run1['id']}/sources", ds_file([ds_row("TAG-001", make="ACME")]), name="ds.xlsx")
-    upload(client, f"/api/runs/{run1['id']}/sources", fixture_workbook([fixture_row("TAG-002", make="S-2")]))
-    cons1 = consolidate(client, run1["id"])
-    con = db(client)
-    before = _run_state(con, run1["id"])
-    mds, spir = client.get(f"/api/runs/{run1['id']}").json()["sources"]
+    run = new_run(client, m["id"])
+    upload(client, f"/api/runs/{run['id']}/sources", ds_file([ds_row("TAG-001", make="ACME")]), name="ds.xlsx")
+    upload(client, f"/api/runs/{run['id']}/sources", fixture_workbook([fixture_row("TAG-002", make="S-2")]))
+    consolidate(client, run["id"])
+    mds, spir = client.get(f"/api/runs/{run['id']}").json()["sources"]
+    spir_file = data_dir / "milestones" / "MTL-2026-001" / "sources" / f"{spir['sha256']}.xlsx"
+    assert spir_file.exists()
 
-    r = client.delete(f"/api/runs/{run1['id']}/sources/{spir['id']}")
+    r = client.delete(f"/api/runs/{run['id']}/sources/{spir['id']}")
     assert r.status_code == 200, r.text
-    run2 = r.json()
-    assert run2["id"] != run1["id"] and run2["status"] != "CONSOLIDATED"
-    assert [(s["source_type"], s["document_id"]) for s in run2["sources"]] == [("MDS", mds["document_id"])]
-    assert client.get(f"/api/milestones/{m['id']}/runs").json()[0]["id"] == run2["id"]    # now the current run
+    after = r.json()
+    assert after["id"] == run["id"] and after["status"] == "DOCUMENTS_UPLOADED"
+    assert [(s["source_type"], s["document_id"]) for s in after["sources"]] == [("MDS", mds["document_id"])]
+    con = db(client)
+    assert con.execute("select count(*) from source_record where run_source_id = ?", (spir["id"],)).fetchone()[0] == 0
+    assert con.execute("select count(*) from source_document").fetchone()[0] == 1
+    assert not spir_file.exists()
+    assert _result_counts(con, run["id"]) == (0, 0, 0, 0, 0)
+    assert [t["code"] for t in consolidate(client, run["id"])["source_types"]] == ["MDS"]
 
-    # The removed-from run, its evidence and its outputs are untouched.
-    assert _run_state(con, run1["id"]) == before
-    assert client.get(f"/api/runs/{run1['id']}/consolidation").json()["source_types"] == cons1["source_types"]
-
-    assert client.delete(f"/api/runs/{run2['id']}/sources/{spir['id']}").status_code == 404   # not part of run 2
+    assert client.delete(f"/api/runs/{run['id']}/sources/{spir['id']}").status_code == 404
     assert client.delete(f"/api/runs/999999/sources/{mds['id']}").status_code == 404
+    # The last document removed: the run is back to its empty state.
+    assert client.delete(f"/api/runs/{run['id']}/sources/{mds['id']}").json()["status"] == "CREATED"
+    assert len(client.get(f"/api/milestones/{m['id']}/runs").json()) == 1
 
 
-def test_consolidated_evidence_is_immutable_in_the_database(client):
+def test_consolidated_evidence_is_never_edited_in_the_database(client):
     _, run = small_run(client, [ds_row("TAG-001", make="ACME")])
     consolidate(client, run["id"])
     con = db(client)
-    doc_id, = con.execute("select id from source_document").fetchone()
-    for sql in ("UPDATE canonical_cell SET raw_value = 'X'", "DELETE FROM canonical_cell",
-                "UPDATE run_consolidation SET cell_count = 0", "DELETE FROM output_artifact",
+    for sql in ("UPDATE canonical_cell SET raw_value = 'X'", "UPDATE run_consolidation SET cell_count = 0",
                 "UPDATE output_artifact SET sha256 = 'x'"):
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             con.execute(sql)
-    with pytest.raises(sqlite3.IntegrityError, match="frozen"):
-        con.execute("INSERT INTO run_source (run_id, source_document_id, processing_status, report, processed_at) "
-                    "VALUES (?, ?, 'PROCESSED', '{}', '2026-01-01')", (run["id"], doc_id))
-    with pytest.raises(sqlite3.IntegrityError, match="earlier state"):
-        con.execute("UPDATE processing_run SET status = 'DOCUMENTS_UPLOADED' WHERE id = ?", (run["id"],))
 
 
 def test_failed_consolidation_leaves_nothing_behind_and_can_be_retried(client, data_dir, monkeypatch):
@@ -574,7 +554,7 @@ def test_real_two_source_workbook_columns_equal_original_backup(client, data_dir
         assert [r[1] for r in mine] == [r[1] for r in ref[1:] if r[1] is not None]
         for got, want_row in zip(mine, ref[1:]):
             for got_v, col in ((got[5], mds_col), (got[6], spir_col)):
-                want = None if want_row[col] in (None, "") else str(want_row[col])
+                want = None if want_row[col] in (None, "") else str(want_row[col]).upper()   # written upper-cased
                 if got_v != want:
                     assert deviations[(info.sheet_name, want_row[1])] == (got_v, want)
                     seen += 1
@@ -592,8 +572,8 @@ def test_source_missing_a_column_consolidates_without_it(client, data_dir, real_
     upload(client, f"/api/runs/{run['id']}/sources", real_datasheet_bytes, name=REAL_DATASHEET_FILE.name)
     data = without_column(real_spir_bytes, "SPIR DATA", "PART NUMBER")
     sp = upload(client, f"/api/runs/{run['id']}/sources", data, name="spir-no-part.xlsx").json()
-    assert sp["source_type"] == "SPIR" and sp["processing_status"] == "PROCESSED_WITH_WARNINGS"
-    assert [w["code"] for w in sp["warnings"]] == ["FIELD_NOT_PROVIDED"]
+    assert sp["source_type"] == "SPIR" and sp["processing_status"] == "PROCESSED" and sp["warnings"] == []
+    assert [w["code"] for w in sp["notes"]] == ["FIELD_NOT_PROVIDED"]
     assert "PART_NUMBER" not in sp["attributes_provided"] and "PART_NUMBER" not in sp["attribute_counts"]
 
     cons = consolidate(client, run["id"])

@@ -3,6 +3,9 @@ against the locked scope → persist evidence.
 
 The milestone scope is read, never written: runs exist only on locked milestones (enforced here and by a
 database trigger), and source tags outside the scope are reported, never added.
+
+Single-run workflow: the user works on one run. Adding, removing or re-typing a document edits that run's
+source set and discards any consolidation / comparison built on the previous set, so they are run again.
 """
 
 import json
@@ -11,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import PurePath
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from backend.config import RULES_VERSION
@@ -30,13 +33,17 @@ from backend.services.milestones import ConflictError, InvalidInputError, NotFou
 from backend.storage.database import Database
 from backend.storage.files import FileStore, sha256_bytes
 from backend.storage.models import (
+    CanonicalCell,
+    ComparisonResult,
     Milestone,
     MilestoneTag,
+    OutputArtifact,
     ProcessingRun,
+    RunComparison,
+    RunConsolidation,
     RunSource,
     SourceDocument,
     SourceRecord,
-    utcnow,
 )
 
 log = logging.getLogger(__name__)
@@ -87,6 +94,7 @@ class RunSourceView:
     rows_without_tag_key: list[int]
     errors: list[Issue]
     warnings: list[Issue]
+    notes: list[Issue] = field(default_factory=list)       # informational (Severity.INFO)
 
 
 @dataclass(frozen=True)
@@ -120,6 +128,7 @@ class IdentificationView:
     skipped_sheets: list[dict]
     errors: list[Issue]
     warnings: list[Issue]
+    notes: list[Issue] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -186,25 +195,13 @@ class RunService:
 
     # ---- runs
 
-    def create_run(self, milestone_id: int, notes: str | None, base_run_id: int | None = None,
-                   exclude_source_ids: frozenset[int] = frozenset()) -> RunDetailView:
-        """Create a run. With `base_run_id`, the new run starts with that run's successfully processed
-        documents (except `exclude_source_ids`): each is read back from the vault (hash-verified) and
-        extracted afresh for the new run. The base run is only read, never changed."""
+    def create_run(self, milestone_id: int, notes: str | None) -> RunDetailView:
         with self.db.session() as s:
             m = s.get(Milestone, milestone_id)
             if m is None:
                 raise NotFoundError(f"Milestone {milestone_id} does not exist.")
             if m.status != MilestoneStatus.SCOPE_LOCKED:
                 raise ConflictError("A processing run can only be created after the milestone scope is locked.")
-            carried: list[tuple[str, str, str, str | None]] = []
-            if base_run_id is not None:
-                base = s.get(ProcessingRun, base_run_id)
-                if base is None or base.milestone_id != m.id:
-                    raise InvalidInputError(f"Run {base_run_id} is not a run of milestone '{m.milestone_code}'.")
-                carried = [(rs.document.stored_path, rs.document.sha256, rs.document.original_filename, rs.source_type)
-                           for rs in base.sources if rs.processing_status != SourceProcessingStatus.FAILED
-                           and rs.id not in exclude_source_ids]
             number = (s.scalar(select(func.max(ProcessingRun.run_number))
                                .where(ProcessingRun.milestone_id == m.id)) or 0) + 1
             run = ProcessingRun(milestone_id=m.id, run_number=number, status=RunStatus.CREATED,
@@ -213,8 +210,6 @@ class RunService:
             s.flush()
             run_id = run.id
         log.info("Created run %s for milestone id=%s (run id=%s)", number, milestone_id, run_id)
-        for path, digest, name, source_type in carried:
-            self.upload_source(run_id, name, self.files.read_verified(path, digest), source_type)
         return self.get_run(run_id)
 
     def list_runs(self, milestone_id: int) -> list[RunDetailView]:
@@ -256,7 +251,8 @@ class RunService:
             mapping=[vars(b) for b in ext.mapping] if ext else [],
             headers_found=ext.headers_found if ext else [], skipped_sheets=p.ident.skipped_sheets,
             errors=[i for i in issues if i.severity == Severity.ERROR],
-            warnings=[i for i in issues if i.severity == Severity.WARNING])
+            warnings=[i for i in issues if i.severity == Severity.WARNING],
+            notes=[i for i in issues if i.severity == Severity.INFO])
 
     def upload_source(self, run_id: int, file_name: str, data: bytes, source_type: str | None,
                       document_date: str | None = None, revision: str | None = None) -> RunSourceView:
@@ -266,18 +262,17 @@ class RunService:
         digest = sha256_bytes(data)
         name = PurePath(file_name).name
 
+        discarded: list[str] = []
         with self.db.session() as s:
             run = self._run(s, run_id)
-            if run.status == RunStatus.CONSOLIDATED:
-                raise ConflictError(
-                    f"Run {run.run_number} is consolidated, so its source set is frozen. Create a new run to add "
-                    f"or revise documents — run {run.run_number} stays unchanged.")
             m = s.get(Milestone, run.milestone_id)
             existing = s.scalar(select(SourceDocument).where(SourceDocument.milestone_id == m.id,
                                                              SourceDocument.sha256 == digest))
             if existing is not None and s.scalar(select(RunSource.id).where(
                     RunSource.run_id == run.id, RunSource.source_document_id == existing.id)) is not None:
-                raise ConflictError(f"This file (SHA-256 {digest[:12]}…) is already part of run {run.run_number}.")
+                raise ConflictError(f"This file (SHA-256 {digest[:12]}…) has already been uploaded.")
+            # The source set changes, so any consolidation / comparison built on the old set no longer holds.
+            discarded = self._discard_results(s, run)
             scope = dict(s.execute(select(MilestoneTag.normalized_tag, MilestoneTag.id)
                                    .where(MilestoneTag.milestone_id == m.id)).all())
 
@@ -336,21 +331,43 @@ class RunService:
                     run.status = RunStatus.DOCUMENTS_UPLOADED
             rs_id = rs.id
 
+        self._delete_files(discarded)
         log.info("Run id=%s: %s processed as %s -> %s", run_id, name, detected, status)
         return self.get_run_source(run_id, rs_id)
 
     def remove_source(self, run_id: int, run_source_id: int) -> RunDetailView:
-        """Remove a document from the milestone's working source set. Source records are immutable, so the
-        run is not edited: a new run is created carrying every other processed document forward. The given
-        run, its records and the stored file stay unchanged in history."""
+        """Remove a document from the run. Its extracted records go with it, and the run's consolidation and
+        comparison (built on the previous source set) are discarded, to be run again."""
         with self.db.session() as s:
-            rs = s.get(RunSource, run_source_id)
-            if rs is None or rs.run_id != run_id:
-                raise NotFoundError(f"Source {run_source_id} is not part of run {run_id}.")
-            milestone_id = s.get(ProcessingRun, run_id).milestone_id
+            rs, run = self._run_source(s, run_id, run_source_id)
             name = rs.document.original_filename
-        log.info("Run id=%s: removing %s (run source id=%s) via a new run", run_id, name, run_source_id)
-        return self.create_run(milestone_id, None, run_id, frozenset({run_source_id}))
+            files = self._discard_results(s, run) + self._delete_source(s, rs)
+            remaining = s.scalar(select(func.count()).where(RunSource.run_id == run.id,
+                                                            RunSource.processing_status != SourceProcessingStatus.FAILED))
+            run.status = RunStatus.DOCUMENTS_UPLOADED if remaining else RunStatus.CREATED
+        self._delete_files(files)
+        log.info("Run id=%s: removed %s (run source id=%s)", run_id, name, run_source_id)
+        return self.get_run(run_id)
+
+    def retype_source(self, run_id: int, run_source_id: int, source_type: str) -> RunSourceView:
+        """Process an uploaded document again as the type the user chose (for a document whose type could not
+        be detected). The stored file is read back, hash-verified, and replaces the previous attempt."""
+        self._check_requested_type(source_type)
+        with self.db.session() as s:
+            rs, _ = self._run_source(s, run_id, run_source_id)
+            d = rs.document
+            name, path, digest, doc_date, revision = (d.original_filename, d.stored_path, d.sha256,
+                                                      d.document_date, d.revision)
+        data = self.files.read_verified(path, digest)
+        self.remove_source(run_id, run_source_id)
+        return self.upload_source(run_id, name, data, source_type,
+                                  doc_date.isoformat() if doc_date else None, revision)
+
+    def discard_results(self, run_id: int) -> None:
+        """Drop the run's consolidation and comparison so they can be built again."""
+        with self.db.session() as s:
+            files = self._discard_results(s, self._run(s, run_id))
+        self._delete_files(files)
 
     def get_run_source(self, run_id: int, run_source_id: int) -> RunSourceView:
         with self.db.session() as s:
@@ -463,6 +480,42 @@ class RunService:
             s.execute(insert(SourceRecord), payload)
 
     @staticmethod
+    def _discard_results(s: Session, run: ProcessingRun) -> list[str]:
+        """Delete the run's comparison, canonical dataset and generated outputs; return the stored files to
+        delete once the transaction commits. A run without results is left as it is."""
+        paths = list(s.scalars(select(OutputArtifact.stored_path).where(OutputArtifact.run_id == run.id)))
+        for model in (ComparisonResult, RunComparison, CanonicalCell, RunConsolidation, OutputArtifact):
+            s.execute(delete(model).where(model.run_id == run.id))
+        if run.status == RunStatus.CONSOLIDATED:
+            run.status = RunStatus.DOCUMENTS_UPLOADED
+            log.info("Run id=%s: previous consolidation and comparison discarded", run.id)
+        return paths
+
+    @staticmethod
+    def _delete_source(s: Session, rs: RunSource) -> list[str]:
+        """Delete one document's participation and records; the document itself too once nothing uses it."""
+        doc = rs.document
+        s.execute(delete(SourceRecord).where(SourceRecord.run_source_id == rs.id))
+        s.delete(rs)
+        s.flush()
+        if s.scalar(select(RunSource.id).where(RunSource.source_document_id == doc.id).limit(1)) is None:
+            path = doc.stored_path
+            s.delete(doc)
+            return [path]
+        return []
+
+    def _delete_files(self, paths: list[str]) -> None:
+        for p in paths:
+            self.files.delete(p)
+
+    @staticmethod
+    def _run_source(s: Session, run_id: int, run_source_id: int) -> tuple[RunSource, ProcessingRun]:
+        rs = s.get(RunSource, run_source_id)
+        if rs is None or rs.run_id != run_id:
+            raise NotFoundError(f"Source {run_source_id} is not part of run {run_id}.")
+        return rs, s.get(ProcessingRun, run_id)
+
+    @staticmethod
     def _run(s: Session, run_id: int) -> ProcessingRun:
         run = s.get(ProcessingRun, run_id)
         if run is None:
@@ -493,4 +546,5 @@ class RunService:
             skipped_sheets=rep.get("skipped_sheets", []), duplicates=rep.get("duplicates", []),
             out_of_scope=rep.get("out_of_scope", []), rows_without_tag_key=rep.get("rows_without_tag_key", []),
             errors=[i for i in issues if i.severity == Severity.ERROR],
-            warnings=[i for i in issues if i.severity == Severity.WARNING])
+            warnings=[i for i in issues if i.severity == Severity.WARNING],
+            notes=[i for i in issues if i.severity == Severity.INFO])

@@ -1,12 +1,13 @@
 import { CircleCheck, Combine, Download, SourceTypeIcon, Spinner, TriangleAlert } from "../../components/icons";
 import { ErrorLine, Status, Step } from "../../components/ui";
 import { api } from "../../api/client";
+import { saveFromLink } from "../../lib/download";
 import { fmtWhen, nf, plural } from "../../lib/format";
 import type { Workspace } from "./useWorkspace";
 
 const WORKBOOK_KIND = "CONSOLIDATED_WORKBOOK";
 
-export function ConsolidationStep({ ws, onDownloaded }: { ws: Workspace; onDownloaded: (file: string) => void }) {
+export function ConsolidationStep({ ws, onSaved }: { ws: Workspace; onSaved: (msg: string) => void }) {
   const { consPhase: phase, cons } = ws;
   const scopeTags = ws.tagCount;
 
@@ -41,7 +42,7 @@ export function ConsolidationStep({ ws, onDownloaded }: { ws: Workspace; onDownl
       <div className="mt-panel mt-step-content mt-in-mid">
         {phase === "stale" && (
           <div className="mt-stale">
-            <TriangleAlert size={14} /> Documents changed. Consolidate again.
+            <TriangleAlert size={14} /> Documents changed, so the previous results were cleared. Consolidate again.
           </div>
         )}
         {phase === "done" && cons && (
@@ -61,7 +62,12 @@ export function ConsolidationStep({ ws, onDownloaded }: { ws: Workspace; onDownl
                 className="btn btn-secondary btn-sm-32"
                 href={api.downloadUrl(cons.run_id, workbook.id)}
                 download
-                onClick={() => onDownloaded(workbook.file_name)}
+                onClick={(e) => {
+                  saveFromLink(e, api.downloadUrl(cons.run_id, workbook.id), workbook.file_name).then(
+                    (msg) => msg && onSaved(msg),
+                    (err) => onSaved(`Not saved · ${err instanceof Error ? err.message : String(err)}`),
+                  );
+                }}
               >
                 <Download size={15} /> Consolidated workbook
               </a>

@@ -194,6 +194,26 @@ def test_unnamed_file_is_accepted_for_an_explicitly_chosen_unverified_type(clien
     assert refused["processing_status"] == "FAILED" and refused["errors"][0]["code"] == "NOT_THIS_SOURCE_TYPE"
 
 
+def test_undetected_document_is_retyped_in_the_same_run(client):
+    m = locked_milestone(client, small_scope())
+    run = new_run(client, m["id"])
+    data = make_workbook({"Export": [["TAG NUMBER", "MAKE", "MODEL"], ["TAG-001", "ACME", "M1"]]})
+    auto = upload(client, f"/api/runs/{run['id']}/sources", data, name="a.xlsx").json()
+    assert auto["processing_status"] == "FAILED" and auto["source_type"] is None
+
+    r = client.put(f"/api/runs/{run['id']}/sources/{auto['id']}/type", json={"source_type": "ga"})
+    assert r.status_code == 200, r.text
+    s = r.json()
+    assert (s["run_id"], s["source_type"], s["original_filename"], s["sha256"]) == (run["id"], "GA", "a.xlsx", auto["sha256"])
+    assert s["processing_status"] != "FAILED" and s["errors"] == [] and s["matched_tag_count"] == 1
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert [x["id"] for x in detail["sources"]] == [s["id"]] and detail["status"] == "DOCUMENTS_UPLOADED"
+    assert db(client).execute("select count(*) from source_document").fetchone()[0] == 1
+
+    assert client.put(f"/api/runs/{run['id']}/sources/{s['id']}/type", json={"source_type": "BOGUS"}).status_code == 422
+    assert client.put(f"/api/runs/{run['id']}/sources/999/type", json={"source_type": "GA"}).status_code == 404
+
+
 def test_non_workbook_is_rejected(client):
     m = locked_milestone(client, small_scope())
     run = new_run(client, m["id"])
@@ -237,9 +257,11 @@ def test_missing_attribute_column_is_reported_with_headers_found_and_processes(c
     row = ds_row("TAG-001", make="ACME")
     del row[DS_HEADERS.index("MODEL")]
     s = upload(client, f"/api/runs/{run['id']}/sources", ds_file([row], headers=headers)).json()
-    assert s["processing_status"] == "PROCESSED_WITH_WARNINGS" and s["errors"] == []
-    [w] = s["warnings"]
-    assert w["code"] == "FIELD_NOT_PROVIDED" and w["value"] == "MODEL" and "Headers found" in w["message"]
+    # A column the document does not carry is expected, not a problem: an informational note, not a warning.
+    assert s["processing_status"] == "PROCESSED" and s["errors"] == [] and s["warnings"] == []
+    [w] = s["notes"]
+    assert w["code"] == "FIELD_NOT_PROVIDED" and w["severity"] == "INFO"
+    assert w["value"] == "MODEL" and "Headers found" in w["message"]
     assert "MODEL" not in s["attributes_provided"] and s["attribute_counts"]["MAKE"] == 1
 
 
@@ -329,13 +351,12 @@ def test_document_date_and_revision_captured(client):
     assert bad.status_code == 422
 
 
-def test_source_evidence_is_immutable_in_the_database(client):
+def test_source_evidence_is_never_edited_in_the_database(client):
     m = locked_milestone(client, small_scope())
     run = new_run(client, m["id"])
     upload(client, f"/api/runs/{run['id']}/sources", ds_file([ds_row("TAG-001", make="A")]))
     con = db(client)
-    for sql in ("UPDATE source_record SET raw_value = 'B'", "DELETE FROM source_record",
-                "UPDATE source_document SET sha256 = 'x'"):
+    for sql in ("UPDATE source_record SET raw_value = 'B'", "UPDATE source_document SET sha256 = 'x'"):
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             con.execute(sql)
 

@@ -7,14 +7,20 @@ searching those tags across the project's source documents: Asset Photo, Data Sh
 Cross Section (MXS), Test Certificate (MTC), O&M Manual (MOM). MTL Trace does that work instead:
 
 ```
-Finalized tag scope → Create milestone → Import & lock scope
+Load finalized tag scope (validated, then locked for the session)
 → Upload source documents → Identify / validate / extract
 → CONSOLIDATE → canonical dataset
 → COMPARE → FINAL value + MATCH / MISMATCH / REVIEW REQUIRED
 → Comparison workbook (Excel) for engineering review
 ```
 
-It runs entirely on the local machine: no cloud and no authentication.
+It runs entirely on the local machine: no cloud and no authentication. It is delivered as a standalone
+Windows desktop tool (`CDC MTL Tool.exe`): double-click it and the tool opens in its own window.
+
+**One session, no history.** The tool works on one scope and one set of documents at a time. Adding or
+removing a document clears the consolidation and comparison, so you run them again on the new set. Loading a
+new scope replaces everything, and every launch starts empty. Save the comparison workbook you need before you
+close the tool.
 
 ## Core rules
 
@@ -49,14 +55,15 @@ React + TypeScript + Vite (frontend/)  →  FastAPI on localhost (backend/api)
 | Path | Contents |
 |---|---|
 | `backend/api/` | HTTP routes (the only layer that imports FastAPI) |
-| `backend/services/` | Milestone, run, consolidation and comparison workflows |
+| `backend/services/` | Session (one scope + one run), milestone, run, consolidation and comparison workflows |
 | `backend/extraction/` | Source-document adapters (scope, Data Sheet, SPIR) and semantic header discovery |
 | `backend/consolidation/` | Canonical dataset: milestone tag × attribute × source, stored long |
 | `backend/comparison/` | Comparison engine; reads canonical data only, never source files |
 | `backend/output/` | Comparison / consolidated workbook generation |
 | `backend/storage/` | SQLite models and the local file store |
 | `rules/` | Versioned comparison rules |
-| `frontend/src/` | UI: Milestone → Scope → Sources → Consolidation → Comparison → Results |
+| `frontend/src/` | UI, one page: Scope → Sources → Consolidate → Compare → Excel |
+| `desktop.py`, `packaging/`, `build_exe.ps1` | Desktop launcher (pywebview window) and the PyInstaller build |
 | `tests/` | Unit, integration, real-data regression and architecture-boundary tests |
 | `docs/` | PRD, TRD, specification validation, consolidation and adapter notes |
 
@@ -71,7 +78,23 @@ python -m venv .venv
 cd frontend && npm install
 ```
 
-## Running
+## Desktop tool
+
+Build the standalone executable (needs the venv and Node.js, see Setup):
+
+```powershell
+.\build_exe.ps1                 # → dist\CDC MTL Tool.exe
+```
+
+Copy `dist\CDC MTL Tool.exe` to any Windows 10/11 PC and double-click it. Python and Node are not needed there.
+The window uses Microsoft Edge WebView2, which is part of Windows 10/11. The tool starts its engine on a free
+local port (127.0.0.1 only), and closing the window stops it. Working data lives in
+`%LOCALAPPDATA%\CDC MTL Tool\` and is cleared at every launch. "Download" opens a Windows *Save as* dialog.
+
+From a checkout you can also run the same window without building: `npm --prefix frontend run build`, then
+`.venv\Scripts\python desktop.py`.
+
+## Running (development)
 
 Backend (port 8300):
 

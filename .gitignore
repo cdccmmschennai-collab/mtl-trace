@@ -50,3 +50,6 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 SAMPLE FILES/
+# ---- Desktop build output (build_exe.ps1)
+/build/
+/dist/

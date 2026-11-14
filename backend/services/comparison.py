@@ -2,8 +2,8 @@
 comparison workbook.
 
 Reads canonical cells only (plus the candidate values of duplicate cells, from the source records they
-anchor) — never a source file. Compares each run once, under the rules version stamped on the run; the
-results and the workbook are then immutable. A revised source set is a new run.
+anchor) — never a source file. Compares a consolidated source set once, under the rules version stamped
+on the run; results are never edited in place. A changed source set discards them (see the run service).
 """
 
 import json
@@ -17,10 +17,16 @@ from sqlalchemy import insert, select
 
 from backend.comparison.engine import ComparisonInput, Reason, SourceValue, Status, compare_all
 from backend.comparison.rules import Rules, RulesError, load_rules
-from backend.config import REPO_ROOT
+from backend.config import RULES_DIR
 from backend.domain.sources import ATTRIBUTE_INFO, ATTRIBUTES, SOURCE_TYPES
 from backend.output.comparison_workbook import WorkbookModel, build_workbook
-from backend.services.consolidation import OutputView, sheet_shells, source_columns, source_workbook_model
+from backend.services.consolidation import (
+    OUTPUT_BASE_NAME,
+    OutputView,
+    sheet_shells,
+    source_columns,
+    source_workbook_model,
+)
 from backend.services.milestones import ConflictError, NotFoundError
 from backend.storage.database import Database
 from backend.storage.files import FileStore
@@ -40,7 +46,6 @@ log = logging.getLogger(__name__)
 
 COMPARISON_KIND = "COMPARISON_WORKBOOK"
 STATES = [s.value for s in Status]
-RULES_DIR = REPO_ROOT / "rules"
 
 
 @dataclass(frozen=True)
@@ -94,11 +99,11 @@ class ComparisonService:
             run = self._run(s, run_id)
             cons = s.scalar(select(RunConsolidation).where(RunConsolidation.run_id == run.id))
             if cons is None:
-                raise ConflictError(f"Run {run.run_number} has not been consolidated yet. Consolidate it first; "
-                                    f"comparison always runs on the consolidated dataset.")
+                raise ConflictError("The sources have not been consolidated yet. Consolidate them first; "
+                                    "comparison always runs on the consolidated dataset.")
             if s.scalar(select(RunComparison.id).where(RunComparison.run_id == run.id)) is not None:
-                raise ConflictError(f"Run {run.run_number} has already been compared. Its results and workbook are "
-                                    f"preserved unchanged; to compare a revised source set, create a new run.")
+                raise ConflictError("These sources have already been compared. Add or remove a document to "
+                                    "consolidate and compare again.")
             rules = self.rules(run.rules_version)
             try:
                 source_types = sorted(json.loads(cons.source_types), key=rules.rank)
@@ -138,7 +143,7 @@ class ComparisonService:
                                 summary=json.dumps(summary)))
 
             model = source_workbook_model(tags, source_types, snapshot,
-                                          f"{m.milestone_code} run {run.run_number} — comparison (rules {rules.version})")
+                                          f"{m.milestone_code} — comparison (rules {rules.version})")
             by_attr: dict[str, list] = {a.value: [] for a in ATTRIBUTES}
             for r in results:                           # results are attribute-major, scope order within
                 by_attr[r.attribute].append(r)
@@ -147,7 +152,7 @@ class ComparisonService:
             model.remarks = {a: [r.remarks for r in rs] for a, rs in by_attr.items()}
             data = build_workbook(model)
 
-            name = f"MTL-DATA MISMATCH COMPARISION - {m.milestone_code} - RUN-{run.run_number:03d}.xlsx"
+            name = f"{OUTPUT_BASE_NAME}.xlsx"
             path, digest = self.files.store_generated(m.milestone_code, "comparison", run.run_number,
                                                       "comparison.xlsx", data)
             written.append(path)

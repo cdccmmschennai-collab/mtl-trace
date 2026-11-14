@@ -9,18 +9,41 @@ CDC MTL Tool is a local engineering data consolidation and comparison applicatio
 
 It processes a finalized MTL tag scope (milestone) against multiple engineering source documents,
 creates a canonical dataset, compares defined attributes under the authoritative priority/lifecycle
-rules, supports human review, produces the final comparison workbook, and preserves milestone history.
+rules, supports human review, and produces the final comparison workbook.
 
 ## Core Workflow
 
 ```
-Finalized Tag Scope → Create Milestone → Import Finalized Tags → Lock Scope
+Load Finalized Tag Scope (validated → imported → locked, one step)
 → Upload Sources → Identify / Validate → Extract → Normalize
 → CONSOLIDATE → Canonical Dataset → COMPARE → MATCH / MISMATCH / REVIEW REQUIRED
-→ Human Review → Final Output → Save Run / History
+→ Human Review → Final Output (save the workbook)
 ```
 
 Two pillars: **Consolidation** and **Comparison**. Review is part of the comparison workflow.
+
+## Single Session — no runs, no history (decided 2026-11-13, supersedes the PRD/TRD on this point)
+
+The tool works on **one scope and one run** at a time and keeps **no history**.
+
+- `backend/services/session.py` owns the session: loading a scope workbook validates it and, only if valid,
+  discards the previous session (database tables + stored files), then creates the milestone, imports and
+  locks the scope and opens its single run. Milestone and run remain internal engine structure; the UI never
+  shows milestones, run numbers, history or a scope lock step.
+- Adding, removing or re-typing a document edits **the same run** and discards that run's consolidation and
+  comparison (rows + output files). The user consolidates and compares again. Results are still never
+  edited in place (UPDATE triggers stay).
+- The desktop tool starts every launch with an empty session (`MTL_FRESH_START=1`).
+- Do not reintroduce run history, run carry-forward (`base_run_id`), a scope switcher or a history page.
+
+## Delivery — standalone desktop tool
+
+`desktop.py` (pywebview / Edge WebView2 window + uvicorn on a free 127.0.0.1 port, single instance) is
+packaged by `build_exe.ps1` → `dist\CDC MTL Tool.exe` (PyInstaller, `packaging/cdc_mtl_tool.spec`). FastAPI
+serves the built UI (`frontend/dist`) on the same origin. Bundled resources resolve via
+`backend/config.py` (`RESOURCE_ROOT`, `RULES_DIR`, `FRONTEND_DIST`); packaged data lives in
+`%LOCALAPPDATA%\CDC MTL Tool`. Downloads go through the window's `save_file` bridge (Save-as dialog),
+see `frontend/src/lib/download.ts`.
 
 ## Critical Business Rule
 
@@ -127,7 +150,7 @@ Match the reference formatting: purple `#7030A0` A:E headers, yellow `#FFFF00` s
 ## Architecture
 
 React + TypeScript + Vite → FastAPI (localhost) → processing engine → SQLite + local filesystem.
-Packaged eventually as a local executable. No cloud, no authentication for V1.
+Packaged as a local executable (see Delivery above). No cloud, no authentication for V1.
 
 Boundaries, enforced by imports:
 - `comparison` never imports `extraction` — it reads canonical data only
@@ -159,7 +182,8 @@ Comparison rules are **versioned data** (`rules/v1.yaml`), not code; `rules_vers
 - Never invent engineering rules. Where the PDF is silent, route to REVIEW REQUIRED and ask.
 - No last-write-wins on duplicate or conflicting source records — surface them for review.
 - Preserve provenance: document, hash, sheet, row, column, and document/page reference where available.
-- Source files and locked scope are immutable. A revised source creates a **new run**, never an overwrite.
+- Source files and the locked scope are never edited in place. A revised source is uploaded as a new document
+  into the session's run (results are then discarded and rebuilt); a new scope starts a new session.
 - Missing values stay missing. Never fabricate.
 - Deterministic rules first; AI makes no engineering decisions in V1.
 
@@ -168,9 +192,9 @@ Comparison rules are **versioned data** (`rules/v1.yaml`), not code; `rules_vers
 Implement only the currently requested phase. Do not add authentication, vendor punch lists, AI decision
 making, cloud deployment, or unrelated features. Avoid over-engineering.
 
-Phase 1 is the full end-to-end slice **through the UI** — create milestone → lock scope → upload →
-extract → consolidate → compare → review → generate workbook → history. Do not push core functionality
-into a later phase to make Phase 1 smaller.
+Phase 1 is the full end-to-end slice **through the UI** — load scope → upload → extract → consolidate →
+compare → review → generate workbook. Do not push core functionality into a later phase to make Phase 1
+smaller.
 
 ## Existing Prototype
 

@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { api } from "../../api/client";
 import { Check, Download, FileSpreadsheet } from "../../components/icons";
-import { Status, Step, useCountUp } from "../../components/ui";
+import { ErrorLine, Status, Step, useCountUp } from "../../components/ui";
+import { saveFromLink } from "../../lib/download";
 import { fmtSize, nf } from "../../lib/format";
 import type { Comparison } from "../../types/api";
 
@@ -11,12 +13,13 @@ import type { Comparison } from "../../types/api";
 export function ExcelStep({
   cmp,
   downloaded,
-  onDownload,
+  onSaved,
 }: {
   cmp: Comparison;
   downloaded: boolean;
-  onDownload: () => void;
+  onSaved: (msg: string) => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
   const t = useCountUp();
   const cf = (n: number) => nf(Math.round(n * t));
   const tags = cmp.scope_tag_count;
@@ -31,7 +34,7 @@ export function ExcelStep({
     { label: "REVIEW REQUIRED", n: review, tone: "review" },
   ];
 
-  const status = downloaded ? <Status tone="match" kind="done">Downloaded</Status> : <Status tone="accent">Ready to download</Status>;
+  const status = downloaded ? <Status tone="match" kind="done">Saved</Status> : <Status tone="accent">Ready to download</Status>;
 
   return (
     <Step id="st-out" title="Excel" status={status} last onBlue>
@@ -111,13 +114,21 @@ export function ExcelStep({
               className={`btn btn-final${downloaded ? " is-done" : ""}`}
               href={api.downloadUrl(cmp.run_id, cmp.output.id)}
               download
-              onClick={onDownload}
+              onClick={(e) => {
+                const out = cmp.output!;
+                setError(null);
+                saveFromLink(e, api.downloadUrl(cmp.run_id, out.id), out.file_name).then(
+                  (msg) => msg && onSaved(msg),
+                  (err) => setError(`The workbook was not saved: ${err instanceof Error ? err.message : String(err)}`),
+                );
+              }}
             >
               {downloaded ? <Check className="pop" /> : <Download />}
-              {downloaded ? "Downloaded · download again" : "Download comparison Excel"}
+              {downloaded ? "Saved · save again" : "Download comparison Excel"}
             </a>
           </div>
         )}
+        <ErrorLine message={error} />
       </div>
     </Step>
   );

@@ -35,7 +35,7 @@ def workbook(client, run_id: int, cmp: dict):
     art = cmp["output"]
     r = client.get(f"/api/runs/{run_id}/outputs/{art['id']}/download")
     assert r.status_code == 200 and hashlib.sha256(r.content).hexdigest() == art["sha256"]
-    assert art["kind"] == "COMPARISON_WORKBOOK" and art["file_name"].endswith("RUN-001.xlsx")
+    assert art["kind"] == "COMPARISON_WORKBOOK" and art["file_name"] == "MTL-DATA MISMATCH COMPARISION.xlsx"
     return openpyxl.load_workbook(io.BytesIO(r.content))
 
 
@@ -157,13 +157,12 @@ def test_real_rows_without_any_source_value_have_no_verdict(real_compared):
 def test_comparison_is_persisted_once_and_immutable(client, real_compared):
     _, run, cmp, _ = real_compared
     r = client.post(f"/api/runs/{run['id']}/compare")
-    assert r.status_code == 409 and "new run" in r.json()["detail"]
+    assert r.status_code == 409 and "already been compared" in r.json()["detail"]
     assert client.get(f"/api/runs/{run['id']}/comparison").json() == cmp
     con = sqlite3.connect(client.app.state.db.path, isolation_level=None)
     assert con.execute("select count(*) from comparison_result where run_id = ?", (run["id"],)).fetchone()[0] == 717 * 5
     assert {r[0] for r in con.execute("select distinct status from comparison_result")} == {None, *STATES}
-    for sql in ("UPDATE comparison_result SET status = 'MATCH'", "DELETE FROM comparison_result",
-                "UPDATE run_comparison SET summary = '{}'"):
+    for sql in ("UPDATE comparison_result SET status = 'MATCH'", "UPDATE run_comparison SET summary = '{}'"):
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             con.execute(sql)
 

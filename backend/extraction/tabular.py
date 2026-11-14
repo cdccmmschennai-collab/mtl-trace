@@ -7,7 +7,7 @@ its document type); field discovery is shared and keyword-based (`backend.domain
 
     header cell → classify_header → join key / attribute / provenance / not extracted
         join key   exactly one column → bound · none → MISSING_FIELD (error) · several → AMBIGUOUS_FIELD (error)
-        attribute  exactly one column → bound · none → FIELD_NOT_PROVIDED (warning) · several → AMBIGUOUS_FIELD (error)
+        attribute  exactly one column → bound · none → FIELD_NOT_PROVIDED (info) · several → AMBIGUOUS_FIELD (error)
         provenance every matching column is kept
 
 Available-data principle: a document carries the attributes it actually has. An attribute column the
@@ -158,6 +158,10 @@ def _err(code: str, message: str, **kw) -> Issue:
 
 def _warn(code: str, message: str, **kw) -> Issue:
     return Issue(Severity.WARNING, code, message, **kw)
+
+
+def _info(code: str, message: str, **kw) -> Issue:
+    return Issue(Severity.INFO, code, message, **kw)
 
 
 def _raw_text(value: object) -> str | None:
@@ -333,12 +337,12 @@ def extract_sheet(source_type: str, book: Workbook, sheet_name: str) -> Extracti
     join_col = join_cands[0][0]
 
     if foreign:
-        ext.issues.append(_warn(
+        ext.issues.append(_info(
             "CROSS_REFERENCE_FIELD",
             f"{doc}: {where(foreign)} name{'s' if len(foreign) == 1 else ''} another source type "
-            f"({', '.join(sorted({m.source_qualifier for _, m in foreign}))}); "
-            f"{'it is' if len(foreign) == 1 else 'they are'} a cross-reference, not this document's value, "
-            f"and {'is' if len(foreign) == 1 else 'are'} not extracted.",
+            f"({', '.join(sorted({m.source_qualifier for _, m in foreign}))}), so "
+            f"{'it is' if len(foreign) == 1 else 'they are'} read as a cross-reference and not used as this "
+            f"document's value.",
             value=", ".join(str(header[i]).strip() for i, _ in foreign)))
 
     attr_cols: dict[Attribute, int] = {}
@@ -370,11 +374,11 @@ def extract_sheet(source_type: str, book: Workbook, sheet_name: str) -> Extracti
     if not ext.ok:
         return ext
     if not_provided:
-        ext.issues.append(_warn(
+        ext.issues.append(_info(
             "FIELD_NOT_PROVIDED",
-            f"{doc}: no column for {', '.join(not_provided)}. This document does not provide "
-            f"{'that attribute' if len(not_provided) == 1 else 'those attributes'}; nothing is filled in. "
-            f"Headers found: {headers_list}.", value=", ".join(not_provided)))
+            f"{doc}: no column for {', '.join(not_provided)}, so it does not contribute "
+            f"{'that attribute' if len(not_provided) == 1 else 'those attributes'}. Headers found: {headers_list}.",
+            value=", ".join(not_provided)))
     ext.provided_attributes = tuple(a for a in ATTRIBUTES if a in attr_cols)
 
     body = rows[header_idx + 1:]

@@ -1,34 +1,26 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
 import { BRAND } from "../app/brand";
 import { Check, CircleAlert, CircleCheck, Spinner, TriangleAlert } from "./icons";
 
 // ------------------------------------------------------------------ header
 
-/** Logo only on the left, optional workflow control in the centre, page action on the right. */
-export function Header({ center, right, brandLink }: { center?: ReactNode; right?: ReactNode; brandLink?: string }) {
+/** Logo only on the left, optional workflow control in the centre, page context on the right. */
+export function Header({ center, right }: { center?: ReactNode; right?: ReactNode }) {
   const label = `${BRAND.product} · ${BRAND.tagline}`;
-  const logo = <img className="mt-logo" src={BRAND.logoSrc} alt={BRAND.logoAlt} />;
   return (
     <header className="mt-header">
       <div className="mt-header-inner">
-        {brandLink ? (
-          <Link to={brandLink} className="mt-brand" aria-label={label}>
-            {logo}
-          </Link>
-        ) : (
-          <a
-            href="#"
-            className="mt-brand"
-            aria-label={label}
-            onClick={(e) => {
-              e.preventDefault();
-              window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
-            }}
-          >
-            {logo}
-          </a>
-        )}
+        <a
+          href="#"
+          className="mt-brand"
+          aria-label={label}
+          onClick={(e) => {
+            e.preventDefault();
+            window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+          }}
+        >
+          <img className="mt-logo" src={BRAND.logoSrc} alt={BRAND.logoAlt} />
+        </a>
         {center && (
           <nav aria-label="Workflow" className="mt-header-nav">
             {center}

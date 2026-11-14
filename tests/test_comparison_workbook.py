@@ -146,12 +146,14 @@ def test_writer_hard_codes_no_source_column():
 
 # ---------------------------------------------------------------- values and summary
 
-def test_values_written_verbatim_and_summary_quantities_computed():
+def test_values_written_verbatim_in_upper_case_and_summary_quantities_computed():
+    """Every text is written upper-cased; nothing else about the value changes (spacing, punctuation)."""
     values = {(0, "MAKE", "MDS"): "TOPSAFE CO., LTD", (1, "MAKE", "MDS"): " Honeywell",
-              (0, "MAKE", "SPIR"): "=NOT A FORMULA", (2, "MODEL", "SPIR"): "M-1"}
+              (0, "MAKE", "SPIR"): "=not a formula", (2, "MODEL", "SPIR"): "m-1"}
     wb = load(build_workbook(model(["MDS", "SPIR"], values=values)))
     ws = wb["MAKE COMPARISION"]
-    assert (ws["F2"].value, ws["F3"].value, ws["G2"].value) == ("TOPSAFE CO., LTD", " Honeywell", "=NOT A FORMULA")
+    assert (ws["F2"].value, ws["F3"].value, ws["G2"].value) == ("TOPSAFE CO., LTD", " HONEYWELL", "=NOT A FORMULA")
+    assert wb["MODEL COMPARISION"]["G4"].value == "M-1"
     assert ws["G2"].data_type == "s"
     s = wb["SUMMERY"]
     assert [s.cell(row=3, column=c).value for c in (3, 4)] == [2, 1]          # MAKE: MDS 2, MIR 1
@@ -181,7 +183,7 @@ def test_comparison_result_is_written_and_counted():
     wb = load(data)
     ws = wb["MAKE COMPARISION"]
     assert [ws.cell(row=r, column=c).value for r in (2, 3, 4) for c in (8, 9, 10)] == \
-        ["Sources disagree", "A", "MISMATCH", None, "C", "MATCH", None, None, None]
+        ["SOURCES DISAGREE", "A", "MISMATCH", None, "C", "MATCH", None, None, None]   # every text upper-cased
     assert [wb["SUMMERY"].cell(row=3, column=c).value for c in (6, 7, 8)] == [1, 1, 0]
     assert [wb["SUMMERY"].cell(row=2, column=c).value for c in (6, 7, 8)] == [None, None, None]   # TAG: no result
     assert any("STATUS" in p for p in validate_workbook(_tamper(data, "MAKE COMPARISION", "J3", "MISMATCH"), m))

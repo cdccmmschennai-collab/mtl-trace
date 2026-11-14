@@ -10,11 +10,13 @@ MTL_DATA/
 │   ├── extracted/  comparison/  review/
 └── logs/
 
-Generated artifacts live in a per-run folder and are never overwritten.
+Generated artifacts live in a per-run folder and are never overwritten: when a run's source set changes,
+its results are discarded (files deleted) and generated again.
 """
 
 import hashlib
 import os
+import shutil
 from pathlib import Path, PurePath
 
 MILESTONE_SUBDIRS = ("scope", "sources", "extracted", "canonical", "comparison", "review", "outputs")
@@ -97,6 +99,15 @@ class FileStore:
         if self.root.resolve() not in path.parents:
             raise ValueError(f"Path {relative_path!r} escapes the data directory")
         return path
+
+    def delete(self, relative_path: str) -> None:
+        """Remove one stored file (a discarded result, or a document removed from the session)."""
+        self.resolve(relative_path).unlink(missing_ok=True)
+
+    def clear_milestones(self) -> None:
+        """Remove every stored scope, source and generated file (the single-session workflow's reset)."""
+        shutil.rmtree(self.root / "milestones", ignore_errors=True)
+        (self.root / "milestones").mkdir(parents=True, exist_ok=True)
 
     def read_verified(self, relative_path: str, sha256: str) -> bytes:
         """Read a stored file and prove it is still the evidence that was recorded."""

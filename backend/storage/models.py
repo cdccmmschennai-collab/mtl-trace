@@ -272,31 +272,28 @@ TRIGGERS = [
     f"""CREATE TRIGGER IF NOT EXISTS trg_run_requires_locked_scope BEFORE INSERT ON processing_run
         WHEN NOT {_LOCKED.format(ref='NEW')}
         BEGIN SELECT RAISE(ABORT, 'processing run requires a locked milestone scope'); END""",
-    # Source evidence is immutable: a revised file is a new document, a revised result is a new run.
+    # Source evidence is never edited in place: a revised file is a new document.
     """CREATE TRIGGER IF NOT EXISTS trg_source_document_immutable BEFORE UPDATE ON source_document
         WHEN NEW.sha256 IS NOT OLD.sha256 OR NEW.stored_path IS NOT OLD.stored_path
           OR NEW.file_size IS NOT OLD.file_size OR NEW.milestone_id IS NOT OLD.milestone_id
         BEGIN SELECT RAISE(ABORT, 'source documents are immutable'); END""",
     """CREATE TRIGGER IF NOT EXISTS trg_source_record_no_update BEFORE UPDATE ON source_record
         BEGIN SELECT RAISE(ABORT, 'source records are immutable'); END""",
-    """CREATE TRIGGER IF NOT EXISTS trg_source_record_no_delete BEFORE DELETE ON source_record
-        BEGIN SELECT RAISE(ABORT, 'source records are immutable'); END""",
-    # Phase 1C — a consolidated run is frozen: no new documents or records, no way back to an earlier state.
-    """CREATE TRIGGER IF NOT EXISTS trg_run_source_frozen BEFORE INSERT ON run_source
-        WHEN (SELECT status FROM processing_run WHERE id = NEW.run_id) = 'CONSOLIDATED'
-        BEGIN SELECT RAISE(ABORT, 'run is consolidated; its sources are frozen'); END""",
-    """CREATE TRIGGER IF NOT EXISTS trg_source_record_frozen BEFORE INSERT ON source_record
-        WHEN (SELECT status FROM processing_run WHERE id = NEW.run_id) = 'CONSOLIDATED'
-        BEGIN SELECT RAISE(ABORT, 'run is consolidated; its sources are frozen'); END""",
-    """CREATE TRIGGER IF NOT EXISTS trg_run_consolidated_forward_only BEFORE UPDATE ON processing_run
-        WHEN OLD.status = 'CONSOLIDATED' AND NEW.status IN ('CREATED', 'DOCUMENTS_UPLOADED')
-        BEGIN SELECT RAISE(ABORT, 'a consolidated run cannot return to an earlier state'); END""",
-    *[f"""CREATE TRIGGER IF NOT EXISTS trg_{t}_no_{op.lower()} BEFORE {op} ON {t}
+    # Single-run workflow: a run's results may be discarded as a whole (when its source set changes) and are
+    # then rebuilt, but a stored result is never edited in place.
+    *[f"""CREATE TRIGGER IF NOT EXISTS trg_{t}_no_update BEFORE UPDATE ON {t}
         BEGIN SELECT RAISE(ABORT, '{t} rows are immutable'); END"""
-      for t in ("canonical_cell", "run_consolidation", "output_artifact", "run_comparison", "comparison_result")
-      for op in ("UPDATE", "DELETE")],
+      for t in ("canonical_cell", "run_consolidation", "output_artifact", "run_comparison", "comparison_result")],
     # Phase 1D — comparison only on a consolidated run.
     """CREATE TRIGGER IF NOT EXISTS trg_comparison_requires_consolidation BEFORE INSERT ON run_comparison
         WHEN (SELECT status FROM processing_run WHERE id = NEW.run_id) IS NOT 'CONSOLIDATED'
         BEGIN SELECT RAISE(ABORT, 'comparison requires a consolidated run'); END""",
+]
+
+# Triggers of the earlier multi-run (history-preserving) workflow. Dropped from existing databases on start.
+OBSOLETE_TRIGGERS = [
+    "trg_source_record_no_delete", "trg_run_source_frozen", "trg_source_record_frozen",
+    "trg_run_consolidated_forward_only",
+    *[f"trg_{t}_no_delete"
+      for t in ("canonical_cell", "run_consolidation", "output_artifact", "run_comparison", "comparison_result")],
 ]

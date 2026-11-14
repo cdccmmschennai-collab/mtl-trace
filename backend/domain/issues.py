@@ -5,6 +5,9 @@ from enum import StrEnum
 class Severity(StrEnum):
     ERROR = "ERROR"
     WARNING = "WARNING"
+    # Expected, informational: what a document does not carry (no `TAG NUMBER AS PER DOC` column) or a column
+    # deliberately left alone (a cross-reference). Shown with the document, never flags it as needing attention.
+    INFO = "INFO"
 
 
 @dataclass(frozen=True)

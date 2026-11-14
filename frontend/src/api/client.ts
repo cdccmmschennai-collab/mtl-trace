@@ -2,12 +2,11 @@ import type {
   CanonicalPage,
   Comparison,
   Consolidation,
-  MilestoneDetail,
-  MilestoneSummary,
   Run,
   RunSource,
   Scope,
   ScopeValidationReport,
+  Session,
   SourceRowsPage,
   SourceType,
 } from "../types/api";
@@ -24,7 +23,7 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
-  const body = await res.json().catch(() => null);
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const detail = body?.detail;
     if (detail && typeof detail === "object" && "report" in detail) {
@@ -44,40 +43,35 @@ function upload<T>(path: string, file: File, fields: Record<string, string | und
 }
 
 export const api = {
-  listMilestones: () => request<MilestoneSummary[]>("/api/milestones"),
-  getMilestone: (id: number) => request<MilestoneDetail>(`/api/milestones/${id}`),
-  createMilestone: (body: { milestone_code: string; project_name?: string }) =>
-    request<MilestoneDetail>("/api/milestones", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  getScope: (id: number) => request<Scope>(`/api/milestones/${id}/scope`),
-  validateScope: (id: number, file: File) => upload<ScopeValidationReport>(`/api/milestones/${id}/scope/validate`, file),
-  importScope: (id: number, file: File) =>
-    upload<{ report: ScopeValidationReport; milestone: MilestoneDetail }>(`/api/milestones/${id}/scope`, file),
-  lockScope: (id: number) => request<MilestoneDetail>(`/api/milestones/${id}/scope/lock`, { method: "POST" }),
+  // ---- the one working session: scope → its single run
+  /** Resolves to null before a scope has been loaded. */
+  getSession: () => request<Session | null>("/api/session"),
+  /** Dry run; the current session is untouched. */
+  validateScope: (file: File) => upload<ScopeValidationReport>("/api/session/scope/validate", file),
+  /** Replaces the whole session (scope, documents, results) with one built on this scope. */
+  startSession: (file: File) => upload<Session>("/api/session/scope", file),
+  resetSession: () => request<null>("/api/session", { method: "DELETE" }),
+  getScope: (milestoneId: number) => request<Scope>(`/api/milestones/${milestoneId}/scope`),
 
+  // ---- documents
   sourceTypes: () => request<SourceType[]>("/api/source-types"),
-  listRuns: (milestoneId: number) => request<Run[]>(`/api/milestones/${milestoneId}/runs`),
-  createRun: (milestoneId: number, notes?: string, baseRunId?: number | null) =>
-    request<Run>(`/api/milestones/${milestoneId}/runs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes: notes || null, base_run_id: baseRunId ?? null }),
-    }),
   getRun: (runId: number) => request<Run>(`/api/runs/${runId}`),
-  uploadSource: (
-    runId: number,
-    file: File,
-    fields: { source_type?: string },
-  ) => upload<RunSource>(`/api/runs/${runId}/sources`, file, fields),
-  /** Resolves to the new run carrying every other processed document; the given run is left unchanged. */
+  uploadSource: (runId: number, file: File, fields: { source_type?: string } = {}) =>
+    upload<RunSource>(`/api/runs/${runId}/sources`, file, fields),
+  /** Resolves to the updated run. */
   removeSource: (runId: number, sourceId: number) =>
     request<Run>(`/api/runs/${runId}/sources/${sourceId}`, { method: "DELETE" }),
+  /** Process an uploaded document again as the chosen type. */
+  retypeSource: (runId: number, sourceId: number, sourceType: string) =>
+    request<RunSource>(`/api/runs/${runId}/sources/${sourceId}/type`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_type: sourceType }),
+    }),
   sourceRows: (runId: number, sourceId: number, offset: number, limit: number) =>
     request<SourceRowsPage>(`/api/runs/${runId}/sources/${sourceId}/rows?offset=${offset}&limit=${limit}`),
 
+  // ---- consolidation & comparison
   consolidate: (runId: number) => request<Consolidation>(`/api/runs/${runId}/consolidate`, { method: "POST" }),
   /** Resolves to null while the run has not been consolidated. */
   getConsolidation: (runId: number) =>

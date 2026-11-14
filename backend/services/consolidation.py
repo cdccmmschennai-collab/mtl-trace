@@ -1,9 +1,8 @@
 """Consolidation workflow (Phase 1C): a run's stored SOURCE_RECORDs + the locked scope → canonical dataset
 → generated consolidated workbook and canonical snapshot.
 
-Reads source *records* only — never reopens a source file. Consolidates each run exactly once; the run's
-sources are then frozen (service check + database triggers), so a revised or additional document goes
-into a new run and earlier runs stay exactly as they were.
+Reads source *records* only — never reopens a source file. Consolidates a source set once; when the run's
+source set changes, the run service discards the consolidation and the user consolidates again.
 
 No FINAL value, priority, or MATCH / MISMATCH / REVIEW REQUIRED is produced here (Phase 1D).
 """
@@ -55,6 +54,7 @@ log = logging.getLogger(__name__)
 
 WORKBOOK_KIND = "CONSOLIDATED_WORKBOOK"
 SNAPSHOT_KIND = "CANONICAL_SNAPSHOT"
+OUTPUT_BASE_NAME = "MTL-DATA MISMATCH COMPARISION"          # download names of the generated files
 LOCATION_KEYS = ("document", "sheet", "row", "cell", "document_reference", "page")
 
 # Row filters for the CONSOLIDATION grid. Presentation only — they select rows, they decide nothing.
@@ -190,14 +190,12 @@ class ConsolidationService:
             run = self._run(s, run_id)
             if run.status == RunStatus.CONSOLIDATED or self._record(s, run_id) is not None:
                 raise ConflictError(
-                    f"Run {run.run_number} is already consolidated. Its canonical dataset and outputs are "
-                    f"preserved unchanged; to add or revise documents, create a new run.")
+                    "These sources are already consolidated. Add or remove a document to consolidate again.")
             m = s.get(Milestone, run.milestone_id)
             included = [rs for rs in run.sources
                         if rs.processing_status != SourceProcessingStatus.FAILED and rs.source_type is not None]
             if not included:
-                raise ConflictError(
-                    f"Run {run.run_number} has no successfully processed source document to consolidate.")
+                raise ConflictError("There is no successfully processed source document to consolidate.")
             source_types = ordered_source_types({rs.source_type for rs in included})
             docs_per_type = {st: sum(1 for rs in included if rs.source_type == st) for st in source_types}
             provided: dict[str, set[str]] = {st: set() for st in source_types}
@@ -238,7 +236,7 @@ class ConsolidationService:
                                                            record_by_id, locations))
             snapshot = build_snapshot(self._snapshot_rows(tags, result, locations))
             # Short names on disk (Windows path-length limit); the descriptive name is the download name.
-            base = f"MTL-DATA MISMATCH COMPARISION - {m.milestone_code} - RUN-{run.run_number:03d}"
+            base = OUTPUT_BASE_NAME
             for kind, area, disk_name, name, data in (
                     (SNAPSHOT_KIND, "canonical", "canonical.csv", f"{base} - CANONICAL.csv", snapshot),
                     (WORKBOOK_KIND, "outputs", "consolidated.xlsx", f"{base} - CONSOLIDATED.xlsx", workbook)):
@@ -382,8 +380,7 @@ class ConsolidationService:
         index = {(c.milestone_tag_id, c.attribute.value, c.source_type): c for c in result.cells}
         cells = {k: (c.state, c.raw_value, [(records[i].raw_value, locations[i]) for i in c.record_ids])
                  for k, c in index.items()}
-        return source_workbook_model(tags, list(result.source_types), cells,
-                                     f"{code} run {run_number} — consolidated (pre-comparison)")
+        return source_workbook_model(tags, list(result.source_types), cells, f"{code} — consolidated (pre-comparison)")
 
     @staticmethod
     def _snapshot_rows(tags, result: Consolidation, locations: dict[int, dict]) -> list[SnapshotRow]:

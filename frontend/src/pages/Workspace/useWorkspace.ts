@@ -1,33 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
-import { openRunForUpload, useWorkingRun } from "../../api/useWorkingRun";
 import { prefersReducedMotion } from "../../components/ui";
-import { refFromFileName, sha256Hex } from "../../lib/format";
-import type {
-  Comparison,
-  Consolidation,
-  MilestoneDetail,
-  RunSource,
-  ScopeValidationReport,
-  SourceType,
-} from "../../types/api";
+import type { Comparison, Consolidation, MilestoneDetail, Run, RunSource, ScopeValidationReport, SourceType } from "../../types/api";
 
 /**
- * Workspace state. Everything shown is derived from what the backend reports for the milestone and its current
- * (latest) run; the only local state is what the user has in hand (a picked file, an in-flight request).
+ * Workspace state for the tool's one session: scope → documents → consolidate → compare → Excel. There is no
+ * history: loading a new scope replaces everything. Everything shown is derived from what the backend reports;
+ * the only local state is what the user has in hand (a picked file, an in-flight request).
  */
 
-export type ScopePhase =
-  | "empty"
-  | "selected"
-  | "validating"
-  | "validated"
-  | "invalid"
-  | "importing"
-  | "imported"
-  | "locking"
-  | "locked";
+export type ScopePhase = "empty" | "selected" | "validating" | "validated" | "invalid" | "starting" | "loaded";
 export type DocPhase = "processing" | "ok" | "warn" | "unknown" | "failed";
 export type ConsPhase = "idle" | "running" | "done" | "stale";
 export type CmpPhase = "idle" | "running" | "done";
@@ -39,24 +21,10 @@ export interface DocView {
   source: RunSource | null; // null while the upload is in flight
 }
 
-/** A scope file validated on the "new tag scope" page, handed to the new scope's workspace. */
-const pendingScopes = new Map<number, { file: File; ref: string; report: ScopeValidationReport | null; error: string | null }>();
-/** Files uploaded in this session, by milestone and SHA-256 — needed to re-submit a document with a chosen type. */
-const uploadedFiles = new Map<string, File>();
-
 export const CHECK_COUNT = 4;
 let uploadSeq = 0;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-async function validateOrReport(milestoneId: number, file: File): Promise<ScopeValidationReport> {
-  try {
-    return await api.validateScope(milestoneId, file);
-  } catch (e) {
-    if (e instanceof ApiError && e.report) return e.report;
-    throw e;
-  }
-}
 
 function docPhase(s: RunSource): DocPhase {
   if (s.processing_status === "PROCESSED") return "ok";
@@ -64,42 +32,59 @@ function docPhase(s: RunSource): DocPhase {
   return s.source_type ? "failed" : "unknown";
 }
 
-export function useWorkspace(milestoneId: number | null) {
-  const navigate = useNavigate();
-
-  // ---------------------------------------------------------------- milestone
-  const [milestone, setMilestone] = useState<MilestoneDetail | null | undefined>(milestoneId ? undefined : null);
+export function useWorkspace() {
+  // ---------------------------------------------------------------- session (scope + its one run)
+  const [milestone, setMilestone] = useState<MilestoneDetail | null | undefined>(undefined);
+  const [run, setRun] = useState<Run | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const runRef = useRef<Run | null>(null);
+  runRef.current = run;
 
-  const reloadMilestone = useCallback(async () => {
-    if (!milestoneId) return;
-    try {
-      setMilestone(await api.getMilestone(milestoneId));
-    } catch (e) {
-      setLoadError(message(e));
-    }
-  }, [milestoneId]);
+  // Results belong to the current source set; any change to it discards them (backend and here).
+  const [cons, setCons] = useState<Consolidation | null>(null);
+  const [cmp, setCmp] = useState<Comparison | null>(null);
+  const [hadResults, setHadResults] = useState(false);
+  const clearResults = () => {
+    setCons(null);
+    setCmp(null);
+    setDownloaded(false);
+  };
+
+  const loadResults = useCallback(async (r: Run) => {
+    if (r.status !== "CONSOLIDATED") return;
+    const [c, m] = await Promise.all([api.getConsolidation(r.id), api.getComparison(r.id)]);
+    setCons(c);
+    setCmp(m);
+    setHadResults(true);
+  }, []);
 
   useEffect(() => {
-    reloadMilestone();
-  }, [reloadMilestone]);
+    api.getSession().then(
+      (s) => {
+        setMilestone(s?.milestone ?? null);
+        setRun(s?.run ?? null);
+        if (s) loadResults(s.run).catch((e) => setLoadError(message(e)));
+      },
+      (e) => {
+        setMilestone(null);
+        setLoadError(message(e));
+      },
+    );
+  }, [loadResults]);
 
-  const scopeStatus = milestone?.scope_status ?? "NONE";
-  const locked = scopeStatus === "LOCKED";
+  const hasSession = !!milestone && !!run;
+
+  const [types, setTypes] = useState<SourceType[]>([]);
+  useEffect(() => {
+    if (hasSession && types.length === 0) api.sourceTypes().then(setTypes, (e) => setLoadError(message(e)));
+  }, [hasSession, types.length]);
 
   // ---------------------------------------------------------------- scope
-  const handoff = milestoneId ? pendingScopes.get(milestoneId) : undefined;
-  const [scopeFile, setScopeFile] = useState<File | null>(handoff?.file ?? null);
-  const [scopeRef, setScopeRef] = useState(handoff?.ref ?? "");
-  const [report, setReport] = useState<ScopeValidationReport | null>(handoff?.report ?? null);
+  const [scopeFile, setScopeFile] = useState<File | null>(null);
+  const [report, setReport] = useState<ScopeValidationReport | null>(null);
   const [checksShown, setChecksShown] = useState(0);
-  const [scopeBusy, setScopeBusy] = useState<null | "validate" | "import" | "lock">(null);
-  const [scopeError, setScopeError] = useState<string | null>(handoff?.error ?? null);
-  const [confirmLock, setConfirmLock] = useState(false);
-
-  useEffect(() => {
-    if (milestoneId) pendingScopes.delete(milestoneId);
-  }, [milestoneId]);
+  const [scopeBusy, setScopeBusy] = useState<null | "validate" | "start">(null);
+  const [scopeError, setScopeError] = useState<string | null>(null);
 
   // The four checks come back in one response; reveal them one after another.
   useEffect(() => {
@@ -118,9 +103,7 @@ export function useWorkspace(milestoneId: number | null) {
   }, [report]);
 
   let scopePhase: ScopePhase;
-  if (locked) scopePhase = "locked";
-  else if (scopeBusy === "lock") scopePhase = "locking";
-  else if (scopeBusy === "import") scopePhase = "importing";
+  if (scopeBusy === "start") scopePhase = "starting";
   else if (scopeFile)
     scopePhase =
       scopeBusy === "validate" || (report && checksShown < CHECK_COUNT)
@@ -130,14 +113,12 @@ export function useWorkspace(milestoneId: number | null) {
             ? "validated"
             : "invalid"
           : "selected";
-  else if (scopeStatus === "DRAFT") scopePhase = "imported";
-  else scopePhase = "empty";
+  else scopePhase = hasSession ? "loaded" : "empty";
 
   const pickScopeFile = (file: File) => {
     setScopeFile(file);
     setReport(null);
     setScopeError(null);
-    if (!milestone) setScopeRef(refFromFileName(file.name));
   };
 
   const clearScopeFile = () => {
@@ -152,30 +133,7 @@ export function useWorkspace(milestoneId: number | null) {
     setScopeError(null);
     setReport(null);
     try {
-      if (milestone) {
-        setReport(await validateOrReport(milestone.id, scopeFile));
-        return;
-      }
-      // New tag scope: the scope reference becomes the milestone, then the file is validated against it.
-      const ref = scopeRef.trim();
-      if (!ref) throw new Error("Enter a scope reference.");
-      let created: MilestoneDetail;
-      try {
-        created = await api.createMilestone({ milestone_code: ref });
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 409)
-          throw new Error(`Scope reference ${ref} already exists. Choose another reference, or open it from the scope menu.`);
-        throw e;
-      }
-      let rep: ScopeValidationReport | null = null;
-      let err: string | null = null;
-      try {
-        rep = await validateOrReport(created.id, scopeFile);
-      } catch (e) {
-        err = message(e);
-      }
-      pendingScopes.set(created.id, { file: scopeFile, ref, report: rep, error: err });
-      navigate(`/scopes/${created.id}`);
+      setReport(await api.validateScope(scopeFile));
     } catch (e) {
       setScopeError(message(e));
     } finally {
@@ -183,15 +141,24 @@ export function useWorkspace(milestoneId: number | null) {
     }
   };
 
-  const importScope = async () => {
-    if (!milestone || !scopeFile || scopeBusy) return;
-    setScopeBusy("import");
+  /** Start the session on the validated scope. Replaces any current scope, documents and results. */
+  const startSession = async () => {
+    if (!scopeFile || scopeBusy || processing) return;
+    setScopeBusy("start");
     setScopeError(null);
     try {
-      const res = await api.importScope(milestone.id, scopeFile);
-      setMilestone(res.milestone);
+      const s = await api.startSession(scopeFile);
+      setMilestone(s.milestone);
+      setRun(s.run);
       setScopeFile(null);
       setReport(null);
+      clearResults();
+      setHadResults(false);
+      setUploads([]);
+      setSrcErrors([]);
+      setOpenDocs(new Set());
+      setConsError(null);
+      setCmpError(null);
     } catch (e) {
       if (e instanceof ApiError && e.report) setReport(e.report);
       setScopeError(message(e));
@@ -200,39 +167,13 @@ export function useWorkspace(milestoneId: number | null) {
     }
   };
 
-  const lockScope = async () => {
-    if (!milestone || scopeBusy) return;
-    setScopeBusy("lock");
-    setScopeError(null);
-    try {
-      setMilestone(await api.lockScope(milestone.id));
-      setConfirmLock(false);
-    } catch (e) {
-      setScopeError(message(e));
-    } finally {
-      setScopeBusy(null);
-    }
-  };
-
-  // ---------------------------------------------------------------- sources (current run)
-  const { run, setRun, error: runError } = useWorkingRun(milestoneId ?? 0, !!milestoneId && locked);
-  const runRef = useRef(run);
-  useEffect(() => {
-    runRef.current = run;
-  }, [run]);
-
-  const [types, setTypes] = useState<SourceType[]>([]);
-  useEffect(() => {
-    if (locked) api.sourceTypes().then(setTypes, (e) => setLoadError(message(e)));
-  }, [locked]);
-
+  // ---------------------------------------------------------------- documents
   const [uploads, setUploads] = useState<{ key: string; name: string }[]>([]);
-  const [retyping, setRetyping] = useState<number | null>(null);
-  const [removing, setRemoving] = useState<number | null>(null);
+  const [busySource, setBusySource] = useState<number | null>(null);
   const [srcErrors, setSrcErrors] = useState<string[]>([]);
   const [openDocs, setOpenDocs] = useState<Set<string>>(new Set());
 
-  // Uploads and re-typing run strictly one at a time so that at most one new run is ever opened.
+  // Document changes run one at a time, in order.
   const queue = useRef<Promise<void>>(Promise.resolve());
   const enqueue = (job: () => Promise<void>) => {
     queue.current = queue.current.then(job, job);
@@ -248,188 +189,112 @@ export function useWorkspace(milestoneId: number | null) {
       return n;
     });
 
-  const refreshRun = async (runId: number) => {
-    const fresh = await api.getRun(runId);
+  const refreshRun = async () => {
+    const current = runRef.current;
+    if (!current) return null;
+    const fresh = await api.getRun(current.id);
     runRef.current = fresh;
     setRun(fresh);
     return fresh;
   };
 
-  /** After a failed request, show whatever run the backend now holds as current. */
-  const resync = () => {
-    const current = runRef.current;
-    if (current) refreshRun(current.id).catch(() => undefined);
-  };
+  /**
+   * Run a change to the source set. The backend discards results built on the previous set; a refused change
+   * (e.g. the same file twice) leaves them, so they are read back rather than assumed gone.
+   */
+  const changeSources = (label: string, job: (runId: number) => Promise<void>) =>
+    enqueue(async () => {
+      const current = runRef.current;
+      if (!current) return;
+      try {
+        await job(current.id);
+      } catch (e) {
+        setSrcErrors((errs) => [...errs, `${label}: ${message(e)}`]);
+      } finally {
+        try {
+          const fresh = await refreshRun();
+          if (fresh?.status === "CONSOLIDATED") await loadResults(fresh);
+          else clearResults();
+        } catch (e) {
+          setLoadError(message(e));
+        }
+      }
+    });
 
   const addSources = (files: File[]) => {
-    // Never before the working run is known: uploading then could open a run without the current documents.
-    if (!milestone || !locked || run === undefined) return;
-    const mId = milestone.id;
+    if (!run) return;
     const items = files.map((file) => ({ key: `u${++uploadSeq}`, name: file.name, file }));
     setUploads((u) => [...u, ...items.map(({ key, name }) => ({ key, name }))]);
     setSrcErrors([]);
     for (const it of items) {
-      enqueue(async () => {
+      changeSources(it.name, async (runId) => {
         try {
-          // A consolidated run is frozen: openRunForUpload starts a new run carrying its documents forward.
-          const target = await openRunForUpload(mId, runRef.current ?? null);
-          if (target.id !== runRef.current?.id) runRef.current = target;
-          const rs = await api.uploadSource(target.id, it.file, {});
-          uploadedFiles.set(`${mId}:${rs.sha256}`, it.file);
-          await refreshRun(target.id);
+          const rs = await api.uploadSource(runId, it.file);
           if (rs.processing_status === "FAILED") openDoc(`s${rs.id}`);
-        } catch (e) {
-          setSrcErrors((errs) => [...errs, `${it.name}: ${message(e)}`]);
-          resync();
         } finally {
           setUploads((u) => u.filter((x) => x.key !== it.key));
         }
-      }).then(() => reloadMilestone());
+      });
     }
   };
 
-  const hasFileFor = (rs: RunSource) => !!milestone && uploadedFiles.has(`${milestone.id}:${rs.sha256}`);
-
-  /**
-   * Submit an unrecognised document again with the type the user chose. The backend refuses the same file twice
-   * in one run, so a new run is opened from the current one (base_run_id carries every processed document
-   * forward); the current run is left unchanged. Documents still awaiting a type are re-submitted as they were
-   * when their files are at hand, so they stay visible.
-   */
-  const retype = (rs: RunSource, type: string, picked?: File) => {
-    if (!milestone || run === undefined) return;
-    const mId = milestone.id;
-    const key = `${mId}:${rs.sha256}`;
+  /** Process a document whose type was not detected again, as the type the user chose. */
+  const retype = (rs: RunSource, type: string) => {
     setSrcErrors([]);
-    enqueue(async () => {
-      const file = picked ?? uploadedFiles.get(key);
-      if (!file) return;
-      if (picked) {
-        const digest = await sha256Hex(picked);
-        const same = digest ? digest === rs.sha256 : picked.name === rs.original_filename && picked.size === rs.file_size;
-        if (!same) {
-          setSrcErrors([`${picked.name} is not the same file as ${rs.original_filename}. Choose the original file.`]);
-          return;
-        }
-      }
-      const current = runRef.current;
-      if (!current) return;
-      setRetyping(rs.id);
+    setBusySource(rs.id);
+    changeSources(rs.original_filename, async (runId) => {
       try {
-        const next = await api.createRun(mId, undefined, current.id);
-        runRef.current = next;
-        const up = await api.uploadSource(next.id, file, { source_type: type });
-        uploadedFiles.set(key, file);
-        for (const other of current.sources) {
-          if (other.id === rs.id || other.processing_status !== "FAILED") continue;
-          const f = uploadedFiles.get(`${mId}:${other.sha256}`);
-          if (f) {
-            const again = await api.uploadSource(next.id, f, other.source_type ? { source_type: other.source_type } : {}).catch(() => null);
-            if (again?.processing_status === "FAILED") openDoc(`s${again.id}`);
-          }
-        }
-        await refreshRun(next.id);
-        if (up.processing_status === "FAILED") openDoc(`s${up.id}`);
-      } catch (e) {
-        setSrcErrors([`${rs.original_filename}: ${message(e)}`]);
-        resync();
+        const next = await api.retypeSource(runId, rs.id, type);
+        if (next.processing_status === "FAILED") openDoc(`s${next.id}`);
       } finally {
-        setRetyping(null);
+        setBusySource(null);
       }
-    }).then(() => reloadMilestone());
+    });
   };
 
-  /**
-   * Remove a document from the current source set. The backend opens a new run carrying every other processed
-   * document forward (source records are immutable); documents still awaiting a type are re-submitted as they
-   * were when their files are at hand, as with re-typing.
-   */
   const removeSource = (rs: RunSource) => {
-    if (!milestone || run === undefined) return;
-    const mId = milestone.id;
     setSrcErrors([]);
-    return enqueue(async () => {
-      const current = runRef.current;
-      if (!current) return;
-      setRemoving(rs.id);
+    setBusySource(rs.id);
+    changeSources(rs.original_filename, async (runId) => {
       try {
-        const next = await api.removeSource(current.id, rs.id);
-        runRef.current = next;
-        for (const other of current.sources) {
-          if (other.id === rs.id || other.processing_status !== "FAILED") continue;
-          const f = uploadedFiles.get(`${mId}:${other.sha256}`);
-          if (f) {
-            const again = await api.uploadSource(next.id, f, other.source_type ? { source_type: other.source_type } : {}).catch(() => null);
-            if (again?.processing_status === "FAILED") openDoc(`s${again.id}`);
-          }
-        }
-        await refreshRun(next.id);
-      } catch (e) {
-        setSrcErrors([`${rs.original_filename}: ${message(e)}`]);
-        resync();
+        await api.removeSource(runId, rs.id);
       } finally {
-        setRemoving(null);
+        setBusySource(null);
       }
-    }).then(() => reloadMilestone());
+    });
   };
 
   const docs: DocView[] = [
     ...(run?.sources ?? []).map((s) => ({
       key: `s${s.id}`,
       name: s.original_filename,
-      phase: retyping === s.id || removing === s.id ? ("processing" as const) : docPhase(s),
+      phase: busySource === s.id ? ("processing" as const) : docPhase(s),
       source: s,
     })),
     ...uploads.map((u) => ({ key: u.key, name: u.name, phase: "processing" as const, source: null })),
   ];
   const usable = (run?.sources ?? []).filter((s) => s.processing_status !== "FAILED" && s.source_type);
   const excluded = (run?.sources ?? []).filter((s) => !usable.includes(s));
-  const processing = uploads.length > 0 || retyping !== null || removing !== null;
+  const processing = uploads.length > 0 || busySource !== null;
   const unknownCount = docs.filter((d) => d.phase === "unknown").length;
-  const docsReady = locked && usable.length > 0 && !processing;
+  const docsReady = hasSession && usable.length > 0 && !processing;
 
-  // ---------------------------------------------------------------- consolidation & comparison (current run only)
-  const [cons, setCons] = useState<Consolidation | null>(null);
-  const [cmp, setCmp] = useState<Comparison | null>(null);
-  const [resultsFor, setResultsFor] = useState<number | null>(null);
+  // ---------------------------------------------------------------- consolidation & comparison
   const [consBusy, setConsBusy] = useState(false);
   const [cmpBusy, setCmpBusy] = useState(false);
   const [consError, setConsError] = useState<string | null>(null);
   const [cmpError, setCmpError] = useState<string | null>(null);
-  const [downloadedFor, setDownloadedFor] = useState<number | null>(null);
-
-  const runId = run?.id;
-  const isConsolidated = run?.status === "CONSOLIDATED";
-  useEffect(() => {
-    if (!runId || !isConsolidated) return;
-    let off = false;
-    Promise.all([api.getConsolidation(runId), api.getComparison(runId)]).then(
-      ([c, r]) => {
-        if (off) return;
-        setCons(c);
-        setCmp(r);
-        setResultsFor(runId);
-      },
-      (e) => !off && setLoadError(message(e)),
-    );
-    return () => {
-      off = true;
-    };
-  }, [runId, isConsolidated]);
-
-  // Results are only ever shown for the run they belong to — never a previous run's.
-  const consNow = isConsolidated && cons?.run_id === runId ? cons : null;
-  const cmpNow = isConsolidated && cmp?.run_id === runId ? cmp : null;
-  const stale = !isConsolidated && !!milestone?.runs.some((r) => r.status === "CONSOLIDATED");
+  const [downloaded, setDownloaded] = useState(false);
 
   const consolidate = async () => {
     if (!run || consBusy || processing) return;
     setConsBusy(true);
     setConsError(null);
+    setCmpError(null);
     try {
       setCons(await api.consolidate(run.id));
-      await refreshRun(run.id);
-      reloadMilestone();
+      setHadResults(true);
+      await refreshRun();
     } catch (e) {
       setConsError(message(e));
     } finally {
@@ -443,7 +308,6 @@ export function useWorkspace(milestoneId: number | null) {
     setCmpError(null);
     try {
       setCmp(await api.compare(run.id));
-      reloadMilestone();
     } catch (e) {
       setCmpError(message(e));
     } finally {
@@ -451,47 +315,41 @@ export function useWorkspace(milestoneId: number | null) {
     }
   };
 
-  const consPhase: ConsPhase = consNow ? "done" : consBusy ? "running" : stale ? "stale" : "idle";
+  const consolidated = run?.status === "CONSOLIDATED";
+  const consNow = consolidated && cons?.run_id === run?.id ? cons : null;
+  const cmpNow = consNow && cmp?.run_id === run?.id ? cmp : null;
+  const consPhase: ConsPhase = consNow ? "done" : consBusy ? "running" : hadResults ? "stale" : "idle";
   const cmpPhase: CmpPhase = cmpNow ? "done" : cmpBusy ? "running" : "idle";
-  const downloaded = !!cmpNow && downloadedFor === cmpNow.run_id;
-  const markDownloaded = () => cmpNow && setDownloadedFor(cmpNow.run_id);
 
-  // ---------------------------------------------------------------- readiness & reveal
-  const ready =
-    milestone !== undefined && (!locked || run !== undefined) && (!isConsolidated || resultsFor === runId || !!consNow);
+  // ---------------------------------------------------------------- reveal
+  const ready = milestone !== undefined && (!consolidated || !!consNow);
 
   const show = {
-    src: locked,
-    cons: locked && usable.length > 0 && (!processing || isConsolidated || stale),
+    src: hasSession,
+    cons: hasSession && usable.length > 0 && (!processing || consPhase === "stale"),
     cmp: !!consNow,
     out: !!cmpNow,
   };
 
-  const tagCount =
-    scopeStatus !== "NONE" ? milestone?.tag_count ?? 0 : report?.valid ? report.tag_count : 0;
+  const tagCount = hasSession ? milestone!.tag_count : report?.valid ? report.tag_count : 0;
 
   return {
     milestone,
-    loadError: loadError ?? runError,
+    hasSession,
+    loadError,
     ready,
-    locked,
     tagCount,
     // scope
     scopePhase,
     scopeFile,
-    scopeRef,
-    setScopeRef,
     report,
     checksShown,
     scopeError,
-    confirmLock,
-    setConfirmLock,
     pickScopeFile,
     clearScopeFile,
     validateScope,
-    importScope,
-    lockScope,
-    // sources
+    startSession,
+    // documents
     run,
     types,
     docs,
@@ -506,8 +364,6 @@ export function useWorkspace(milestoneId: number | null) {
     addSources,
     retype,
     removeSource,
-    removing,
-    hasFileFor,
     // consolidation / comparison / output
     cons: consNow,
     cmp: cmpNow,
@@ -518,7 +374,7 @@ export function useWorkspace(milestoneId: number | null) {
     consolidate,
     compare,
     downloaded,
-    markDownloaded,
+    markDownloaded: () => setDownloaded(true),
     show,
   };
 }

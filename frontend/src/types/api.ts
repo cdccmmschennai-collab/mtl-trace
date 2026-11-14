@@ -90,7 +90,7 @@ export interface SourceType {
 }
 
 export interface Issue {
-  severity: "ERROR" | "WARNING";
+  severity: "ERROR" | "WARNING" | "INFO";
   code: string;
   message: string;
   rows: number[];
@@ -139,6 +139,8 @@ export interface RunSource {
   rows_without_tag_key: number[];
   errors: Issue[];
   warnings: Issue[];
+  /** Informational: attributes the document does not carry, columns read as cross-references. */
+  notes: Issue[];
 }
 
 export interface Run {
@@ -153,6 +155,12 @@ export interface Run {
   created_at: string;
   notes: string | null;
   sources: RunSource[];
+}
+
+/** The tool's one working session: the locked scope and its single run. */
+export interface Session {
+  milestone: MilestoneDetail;
+  run: Run;
 }
 
 export interface SourceRow {

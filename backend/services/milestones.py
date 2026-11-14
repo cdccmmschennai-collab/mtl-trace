@@ -174,6 +174,10 @@ class MilestoneService:
     def validate_scope(self, milestone_id: int, file_name: str, data: bytes) -> ScopeReport:
         with self.db.session() as s:
             self._require_unlocked(self._load(s, milestone_id))
+        return self.check_scope(file_name, data)
+
+    def check_scope(self, file_name: str, data: bytes) -> ScopeReport:
+        """Dry run: validate a scope workbook without any milestone and without storing anything."""
         report, _ = self._check_scope_file(file_name, data)
         return report
 

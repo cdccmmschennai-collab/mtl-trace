@@ -22,34 +22,3 @@ export function fmtSize(bytes: number): string {
 }
 
 export const plural = (n: number, one: string, many = `${one}s`) => `${nf(n)} ${n === 1 ? one : many}`;
-
-/** Latest of a set of ISO timestamps (nulls ignored). */
-export function latest(...isos: (string | null | undefined)[]): string | null {
-  let best: string | null = null;
-  for (const t of isos) if (t && (!best || new Date(t) > new Date(best))) best = t;
-  return best;
-}
-
-/**
- * Scope reference typed or derived from the file name, kept to the characters the backend accepts for a
- * milestone code (letters, digits, `.`, `_`, `-`; must start with a letter or digit; max 64).
- */
-export function cleanRef(value: string): string {
-  return value
-    .toUpperCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^A-Z0-9._-]/g, "")
-    .replace(/-{2,}/g, "-")
-    .slice(0, 64);
-}
-
-export function refFromFileName(name: string): string {
-  const base = name.replace(/\.(xlsx|xlsm)$/i, "").replace(/^MTL[_-]?Scope[_-]?/i, "").replace(/_/g, "-");
-  return cleanRef(base).replace(/^[^A-Z0-9]+/, "") || "NEW-SCOPE";
-}
-
-export async function sha256Hex(file: File): Promise<string | null> {
-  if (!globalThis.crypto?.subtle) return null;
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-}

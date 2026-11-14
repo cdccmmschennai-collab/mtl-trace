@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   ChevronDown,
   ChevronUp,
   CircleAlert,
   CircleCheck,
+  Info,
   Spinner,
   SourceTypeIcon,
   TriangleAlert,
@@ -42,7 +43,7 @@ export function SourcesStep({ ws }: { ws: Workspace }) {
   );
 
   const scopeTags = ws.tagCount;
-  const intakeLocked = ws.run === undefined || ws.consPhase === "running" || ws.cmpPhase === "running";
+  const intakeLocked = !ws.run || ws.consPhase === "running" || ws.cmpPhase === "running";
   const canEdit = !ws.processing && ws.consPhase !== "running" && ws.cmpPhase !== "running";
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
@@ -79,7 +80,6 @@ export function SourcesStep({ ws }: { ws: Workspace }) {
                 onToggle={() => ws.toggleDoc(d.key)}
                 types={ws.types}
                 canRetype={canEdit}
-                hasFile={d.source ? ws.hasFileFor(d.source) : false}
                 onRetype={ws.retype}
                 confirming={confirmRemove === d.key}
                 onConfirm={(on) => setConfirmRemove(on ? d.key : null)}
@@ -118,7 +118,6 @@ function DocRow({
   onToggle,
   types,
   canRetype,
-  hasFile,
   onRetype,
   confirming,
   onConfirm,
@@ -131,8 +130,7 @@ function DocRow({
   onToggle: () => void;
   types: SourceType[];
   canRetype: boolean;
-  hasFile: boolean;
-  onRetype: (rs: RunSource, type: string, picked?: File) => void;
+  onRetype: (rs: RunSource, type: string) => void;
   confirming: boolean;
   onConfirm: (on: boolean) => void;
   onRemove: (rs: RunSource) => void;
@@ -213,7 +211,7 @@ function DocRow({
 
       {open && settled && (
         <div className="mt-doc-details mt-in-fast">
-          {unknown && <TypePick source={s!} types={types} canRetype={canRetype} hasFile={hasFile} onRetype={onRetype} />}
+          {unknown && <TypePick source={s!} types={types} canRetype={canRetype} onRetype={onRetype} />}
           <DocDetails source={s!} />
           {!confirming && (
             <div>
@@ -260,23 +258,18 @@ function TypePick({
   source: s,
   types,
   canRetype,
-  hasFile,
   onRetype,
 }: {
   source: RunSource;
   types: SourceType[];
   canRetype: boolean;
-  hasFile: boolean;
-  onRetype: (rs: RunSource, type: string, picked?: File) => void;
+  onRetype: (rs: RunSource, type: string) => void;
 }) {
   const [choice, setChoice] = useState("");
-  const picker = useRef<HTMLInputElement>(null);
 
   const choose = (type: string) => {
     setChoice(type);
-    if (!type) return;
-    if (hasFile) onRetype(s, type);
-    else picker.current?.click(); // the file is not held in this session: ask for it again (verified by SHA-256)
+    if (type) onRetype(s, type); // the backend re-reads the stored file; nothing to choose again
   };
 
   return (
@@ -298,18 +291,6 @@ function TypePick({
             </option>
           ))}
       </select>
-      {!hasFile && <span className="mt-type-pick-hint">You will be asked to choose the file again.</span>}
-      <input
-        ref={picker}
-        type="file"
-        accept={ACCEPT}
-        hidden
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          e.target.value = "";
-          if (f && choice) onRetype(s, choice, f);
-        }}
-      />
     </div>
   );
 }
@@ -344,6 +325,12 @@ function DocDetails({ source: s }: { source: RunSource }) {
         <div key={`w${i}`} className="mt-issue is-warn">
           <TriangleAlert size={14} />
           <span>{w.message}</span>
+        </div>
+      ))}
+      {(s.notes ?? []).map((n, i) => (
+        <div key={`n${i}`} className="mt-issue is-note">
+          <Info size={14} />
+          <span>{n.message}</span>
         </div>
       ))}
     </>

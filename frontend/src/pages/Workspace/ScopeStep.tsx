@@ -6,7 +6,6 @@ import {
   CircleAlert,
   CircleCheck,
   FileSpreadsheet,
-  LockKeyhole,
   Search,
   ShieldCheck,
   Spinner,
@@ -14,7 +13,7 @@ import {
   Upload,
 } from "../../components/icons";
 import { ErrorLine, FileDrop, Status, Step } from "../../components/ui";
-import { cleanRef, fmtSize, fmtWhen, nf, plural } from "../../lib/format";
+import { fmtSize, nf, plural } from "../../lib/format";
 import type { Scope, ScopeValidationReport } from "../../types/api";
 import { CHECK_COUNT, type Workspace } from "./useWorkspace";
 
@@ -51,7 +50,7 @@ function checksOf(r: ScopeValidationReport): Check[] {
 }
 
 export function ScopeStep({ ws }: { ws: Workspace }) {
-  const { scopePhase: phase, milestone, report } = ws;
+  const { scopePhase: phase, milestone, report, hasSession } = ws;
   const replaceInput = useRef<HTMLInputElement>(null);
   const [showTags, setShowTags] = useState(false);
 
@@ -61,14 +60,13 @@ export function ScopeStep({ ws }: { ws: Workspace }) {
     validating: <Status tone="accent" kind="busy">Validating</Status>,
     validated: <Status tone="match" kind="done">Valid</Status>,
     invalid: <Status tone="mismatch" kind="error">Not valid</Status>,
-    importing: <Status tone="accent" kind="busy">Importing</Status>,
-    imported: <Status tone="review" kind="warn">Draft</Status>,
-    locking: <Status tone="accent" kind="busy">Locking</Status>,
-    locked: <Status tone="match" kind="done">Locked</Status>,
+    starting: <Status tone="accent" kind="busy">Loading</Status>,
+    loaded: <Status tone="match" kind="done">Loaded</Status>,
   }[phase];
 
-  const fileStage = ["selected", "validating", "validated", "invalid", "importing"].includes(phase);
+  const fileStage = ["selected", "validating", "validated", "invalid", "starting"].includes(phase);
   const n = ws.tagCount;
+  const busy = phase === "validating" || phase === "starting";
 
   return (
     <Step id="st-scope" title="Finalized tag scope" status={status}>
@@ -100,31 +98,13 @@ export function ScopeStep({ ws }: { ws: Workspace }) {
                 <span className="mt-file-name mono">{ws.scopeFile.name}</span>
                 <span className="mt-file-size mono">{fmtSize(ws.scopeFile.size)}</span>
               </div>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={ws.clearScopeFile} disabled={phase === "validating" || phase === "importing"}>
-                Replace
+              <button type="button" className="btn btn-ghost btn-sm" onClick={ws.clearScopeFile} disabled={busy}>
+                {hasSession ? "Cancel" : "Replace"}
               </button>
-            </div>
-            <div className="mt-panel-section mt-ref-row">
-              <label htmlFor="scope-ref" className="mt-ref-label">
-                Scope reference
-              </label>
-              {milestone ? (
-                <span className="mono mt-ref-fixed">{milestone.milestone_code}</span>
-              ) : (
-                <input
-                  id="scope-ref"
-                  className="mt-input mono"
-                  value={ws.scopeRef}
-                  onChange={(e) => ws.setScopeRef(cleanRef(e.target.value))}
-                  maxLength={64}
-                  spellCheck={false}
-                  disabled={phase !== "selected"}
-                />
-              )}
             </div>
             <div className="mt-panel-section mt-pad">
               {phase === "selected" && (
-                <button type="button" className="btn btn-primary" onClick={ws.validateScope} disabled={!milestone && !ws.scopeRef}>
+                <button type="button" className="btn btn-primary" onClick={ws.validateScope}>
                   <ShieldCheck /> Validate scope
                 </button>
               )}
@@ -132,14 +112,15 @@ export function ScopeStep({ ws }: { ws: Workspace }) {
               {report && phase !== "selected" && (
                 <CheckList checks={checksOf(report).slice(0, ws.checksShown)} pending={Math.min(1, CHECK_COUNT - ws.checksShown)} />
               )}
-              {(phase === "validated" || phase === "importing") && report && (
+              {(phase === "validated" || phase === "starting") && report && (
                 <div className="mt-import-row mt-in">
                   <span className="mt-found">
                     <span className="mt-found-n">{nf(report.tag_count)}</span>tags found
+                    {hasSession && <span className="mt-ink-label mt-replace-note">Replaces the current scope, documents and results.</span>}
                   </span>
-                  <button type="button" className="btn btn-primary" onClick={ws.importScope} disabled={phase === "importing"}>
-                    {phase === "importing" ? <Spinner size={15} /> : <Upload size={15} />}
-                    {phase === "importing" ? "Importing" : `Import ${nf(report.tag_count)} tags`}
+                  <button type="button" className="btn btn-primary" onClick={ws.startSession} disabled={phase === "starting" || ws.processing}>
+                    {phase === "starting" ? <Spinner size={15} /> : <Upload size={15} />}
+                    {phase === "starting" ? "Loading" : `Use ${nf(report.tag_count)} tags`}
                   </button>
                 </div>
               )}
@@ -151,68 +132,16 @@ export function ScopeStep({ ws }: { ws: Workspace }) {
                       <span>{e.message}</span>
                     </div>
                   ))}
-                  <span className="mt-issues-hint">Correct the workbook and choose it again with Replace.</span>
+                  <span className="mt-issues-hint">
+                    Correct the workbook and choose it again{hasSession ? "." : " with Replace."}
+                  </span>
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {(phase === "imported" || phase === "locking") && milestone && (
-          <div className="mt-panel mt-in">
-            <div className="mt-file-row mt-file-row-lg">
-              <FileSpreadsheet size={20} className="mt-ink-2" />
-              <div className="mt-file-meta">
-                <span className="mt-file-name mono">{milestone.scope_file_name}</span>
-                <span className="mt-file-state">
-                  Draft scope · <span className="tnum">{nf(n)}</span> tags
-                </span>
-              </div>
-              <div className="mt-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => replaceInput.current?.click()} disabled={phase === "locking"}>
-                  Replace
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowTags((s) => !s)} aria-expanded={showTags}>
-                  {showTags ? "Hide tags" : "View tags"} {showTags ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
-                {!ws.confirmLock && (
-                  <button type="button" className="btn btn-primary" onClick={() => ws.setConfirmLock(true)}>
-                    <LockKeyhole size={15} /> Lock scope
-                  </button>
-                )}
-              </div>
-              <input
-                ref={replaceInput}
-                type="file"
-                accept=".xlsx,.xlsm"
-                hidden
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (f) ws.pickScopeFile(f);
-                }}
-              />
-            </div>
-            {ws.confirmLock && (
-              <div role="alertdialog" aria-label="Confirm scope lock" className="mt-confirm mt-in-fast">
-                <span>
-                  <strong>Lock {nf(n)} tags?</strong> <span className="mt-ink-label">This can't be undone.</span>
-                </span>
-                <div className="mt-actions">
-                  <button type="button" className="btn btn-ghost btn-md" onClick={() => ws.setConfirmLock(false)} disabled={phase === "locking"}>
-                    Cancel
-                  </button>
-                  <button type="button" className="btn btn-primary btn-md" onClick={ws.lockScope} disabled={phase === "locking"}>
-                    {phase === "locking" ? <Spinner size={15} /> : <LockKeyhole size={15} />}
-                    {phase === "locking" ? "Locking" : `Lock ${nf(n)} tags`}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {phase === "locked" && milestone && (
+        {phase === "loaded" && milestone && (
           <div className="mt-panel mt-file-row mt-in-mid">
             <FileSpreadsheet size={20} className="mt-ink-2" />
             <div className="mt-file-meta">
@@ -221,18 +150,32 @@ export function ScopeStep({ ws }: { ws: Workspace }) {
                 Finalized scope · <span className="tnum">{nf(n)}</span> tags
               </span>
             </div>
-            <span className="mt-locked-at">
-              <LockKeyhole size={15} /> Locked <span className="mono mt-when">{fmtWhen(milestone.scope_locked_at)}</span>
-            </span>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowTags((s) => !s)} aria-expanded={showTags}>
               Tags {showTags ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => replaceInput.current?.click()}
+              disabled={ws.processing || ws.consPhase === "running" || ws.cmpPhase === "running"}
+            >
+              New scope
+            </button>
+            <input
+              ref={replaceInput}
+              type="file"
+              accept=".xlsx,.xlsm"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (f) ws.pickScopeFile(f);
+              }}
+            />
           </div>
         )}
 
-        {showTags && milestone && (phase === "locked" || phase === "imported" || phase === "locking") && (
-          <ScopeTags milestoneId={milestone.id} version={milestone.scope_imported_at} />
-        )}
+        {showTags && milestone && phase === "loaded" && <ScopeTags milestoneId={milestone.id} version={milestone.scope_imported_at} />}
 
         <ErrorLine message={ws.scopeError} />
       </div>

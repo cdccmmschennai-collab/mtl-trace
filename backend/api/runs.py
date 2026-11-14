@@ -8,6 +8,7 @@ from backend.models.schemas import (
     RunOut,
     RunSourceOut,
     SourceIdentificationOut,
+    SourceRetype,
     SourceRowsOut,
     SourceTypeOut,
 )
@@ -37,7 +38,7 @@ def source_types(service: Service):
 @router.post("/milestones/{milestone_id}/runs", response_model=RunOut, status_code=status.HTTP_201_CREATED)
 def create_run(milestone_id: int, service: Service, body: RunCreate | None = None):
     try:
-        return service.create_run(milestone_id, body.notes if body else None, body.base_run_id if body else None)
+        return service.create_run(milestone_id, body.notes if body else None)
     except Errors as exc:
         raise http_error(exc)
 
@@ -95,10 +96,20 @@ def get_source(run_id: int, run_source_id: int, service: Service):
 
 @router.delete("/runs/{run_id}/sources/{run_source_id}", response_model=RunOut)
 def remove_source(run_id: int, run_source_id: int, service: Service):
-    """Remove a document from the working source set. Returns the new run that carries every other processed
-    document forward; the given run is left unchanged (source records are immutable)."""
+    """Remove a document from the run. Any consolidation / comparison of the run is discarded, to be run
+    again on the remaining documents. Returns the updated run."""
     try:
         return service.remove_source(run_id, run_source_id)
+    except Errors as exc:
+        raise http_error(exc)
+
+
+@router.put("/runs/{run_id}/sources/{run_source_id}/type", response_model=RunSourceOut)
+def retype_source(run_id: int, run_source_id: int, body: SourceRetype, service: Service):
+    """Process an uploaded document again as the chosen source type (when its type was not detected).
+    Returns the document's new entry in the run."""
+    try:
+        return service.retype_source(run_id, run_source_id, _type(body.source_type))
     except Errors as exc:
         raise http_error(exc)
 

@@ -3,6 +3,11 @@ fastapi
 uvicorn
 sqlalchemy>=2.0
 python-multipart
+pyyaml
+# desktop window (Edge WebView2) for the standalone tool
+pywebview
+# tests
 pytest
 httpx
-pyyaml
+# building CDC MTL Tool.exe (build_exe.ps1)
+pyinstaller

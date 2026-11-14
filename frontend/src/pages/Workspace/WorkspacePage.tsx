@@ -1,45 +1,34 @@
 ﻿import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
 import { Header, Toast, scrollToStep, useToast, type StepState } from "../../components/ui";
+import { nf } from "../../lib/format";
 import { ComparisonStep } from "./ComparisonStep";
 import { ConsolidationStep } from "./ConsolidationStep";
 import { ExcelStep } from "./ExcelStep";
-import { ScopeSelector } from "./ScopeSelector";
 import { ScopeStep } from "./ScopeStep";
 import { SourcesStep } from "./SourcesStep";
 import { useWorkspace } from "./useWorkspace";
 import { WorkflowNav, type WorkflowItem } from "./WorkflowNav";
 
-/** `/` is a new tag scope; `/scopes/:milestoneId` an existing one. Each scope gets a fresh workspace. */
-export function WorkspaceRoute() {
-  const { milestoneId } = useParams();
-  if (milestoneId === undefined) return <Workspace key="new" milestoneId={null} />;
-  const id = Number(milestoneId);
-  if (!Number.isInteger(id) || id <= 0) return <Navigate to="/" replace />;
-  return <Workspace key={id} milestoneId={id} />;
-}
-
-function Workspace({ milestoneId }: { milestoneId: number | null }) {
-  const ws = useWorkspace(milestoneId);
+/** The tool's single page: scope → source documents → consolidate → compare → Excel. */
+export function Workspace() {
+  const ws = useWorkspace();
   const { toast, show: showToast } = useToast();
-  const { milestone, scopePhase, show, consPhase, cmpPhase, cmp } = ws;
+  const { milestone, hasSession, show, consPhase, cmpPhase, cmp } = ws;
 
-  const locked = scopePhase === "locked";
   const consDone = consPhase === "done";
   const cmpDone = cmpPhase === "done";
 
   const states: StepState[] = [
-    locked ? "done" : "active",
-    !locked ? "waiting" : ws.docsReady ? "done" : "active",
+    hasSession ? "done" : "active",
+    !hasSession ? "waiting" : ws.docsReady ? "done" : "active",
     !ws.docsReady ? "waiting" : consDone ? "done" : "active",
     !consDone ? "waiting" : cmpDone ? "done" : "active",
     !cmpDone ? "waiting" : ws.downloaded ? "done" : "active",
   ];
 
-  const downloadExcel = () => {
-    if (!cmp?.output) return;
+  const onExcelSaved = (msg: string) => {
     ws.markDownloaded();
-    showToast(`Downloaded · ${cmp.output.file_name}`);
+    showToast(msg);
   };
 
   const workflow: WorkflowItem[] = [
@@ -72,19 +61,24 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
     return () => window.clearTimeout(id);
   }, [ws.ready, show.src, show.cons, show.cmp, show.out]);
 
-  const scopeStatus = milestone?.scope_status ?? "NONE";
-
   return (
     <div className="mt-page" ref={page} style={backdrop.minHeight ? { minHeight: backdrop.minHeight } : undefined}>
       <div aria-hidden="true" className="mt-backdrop" style={{ background: backdrop.background }} />
       <Header
         center={<WorkflowNav items={workflow} />}
-        right={<ScopeSelector currentRef={milestone?.milestone_code ?? null} tags={scopeStatus === "NONE" ? 0 : ws.tagCount} />}
+        right={
+          hasSession && milestone ? (
+            <span className="mt-scope-chip" title={milestone.scope_file_name ?? undefined}>
+              <span className="mt-scope-chip-name">{milestone.scope_file_name}</span>
+              <span className="mt-scope-chip-tags">{nf(milestone.tag_count)} tags</span>
+            </span>
+          ) : null
+        }
       />
       <main className="mt-main" id="main">
-        {/* The headline belongs to scope intake only; once the scope is locked the page starts with the steps. */}
+        {/* The headline belongs to scope intake only; once a scope is loaded the page starts with the steps. */}
         <div className="mt-intro">
-          {milestone !== undefined && !locked && (
+          {milestone !== undefined && !hasSession && (
             <h1 className="mt-hero">
               <span className="mt-hero-lead">Trace your MTL data</span>
               <span className="mt-hero-sub">from source to final value</span>
@@ -92,19 +86,14 @@ function Workspace({ milestoneId }: { milestoneId: number | null }) {
           )}
         </div>
 
-        {ws.loadError && milestone === undefined ? (
-          <div className="mt-panel mt-pad mt-load-error">
-            <span>{ws.loadError}</span>
-            <Link to="/">Start a new tag scope</Link>
-          </div>
-        ) : milestone === undefined ? null : (
+        {ws.loadError && <div className="mt-error mt-load-banner">{ws.loadError}</div>}
+        {milestone !== undefined && (
           <>
-            {ws.loadError && <div className="mt-error mt-load-banner">{ws.loadError}</div>}
             <ScopeStep ws={ws} />
             {show.src && <SourcesStep ws={ws} />}
-            {show.cons && <ConsolidationStep ws={ws} onDownloaded={(f) => showToast(`Downloaded · ${f}`)} />}
+            {show.cons && <ConsolidationStep ws={ws} onSaved={showToast} />}
             {show.cmp && <ComparisonStep ws={ws} />}
-            {show.out && cmp && <ExcelStep cmp={cmp} downloaded={ws.downloaded} onDownload={downloadExcel} />}
+            {show.out && cmp && <ExcelStep cmp={cmp} downloaded={ws.downloaded} onSaved={onExcelSaved} />}
           </>
         )}
       </main>
